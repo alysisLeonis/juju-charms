@@ -1,0 +1,187 @@
+#!/bin/bash
+
+set -eux
+
+source inc/common
+
+function resolve_dependencies() {
+	juju-log "Installing dependencies using apt-get"
+
+	add-apt-repository -y ppa:charmers/charm-helpers
+
+	apt-get update && apt-get -y upgrade
+
+	apt-get -y install build-essential \
+		   zlib1g-dev \
+		   libyaml-dev \
+		   libssl-dev \
+		   libgdbm-dev \
+		   libreadline-dev \
+		   libncurses5-dev \
+		   libffi-dev \
+		   curl \
+		   git-core \
+		   openssh-server \
+		   redis-server \
+		   postfix \
+		   checkinstall \
+		   libxml2-dev \
+		   libxslt-dev \
+		   libcurl4-openssl-dev \
+		   libicu-dev \
+		   python2.7 \
+		   libmysqlclient-dev \
+		   ruby1.9.3 \
+		   nginx \
+		   charm-helper-sh \
+		   mysql-client-core-5.5 \
+		   sudo \
+		   pwgen
+
+	juju-log "Installing bundler gem"
+	sudo gem install bundler
+	juju-log "Installing bcrypt-ruby gem"
+	sudo gem install bcrypt-ruby
+	#sudo gem install charlock_holmes --version '0.6.9'
+}
+
+function create_users() {
+	# This user is for gitolite. Its home is where your git repositories
+	# will be stored
+	sudo adduser \
+ 		--system \
+  		--shell /bin/sh \
+  		--gecos 'Git Version Control' \
+  		--group \
+  		--disabled-password \
+  		--home /home/git \
+  		git
+
+	# This user is for gitlab, a web gui for managing your git repositories
+	sudo adduser --disabled-login --gecos 'GitLab' gitlab 	
+
+	# Add it to the git group
+	sudo usermod -a -G git gitlab
+	
+	# Generate the SSH key
+	sudo -u gitlab -H ssh-keygen -q -N '' -t rsa -f /home/gitlab/.ssh/id_rsa
+}
+
+function install_gitolite() {
+	cd /home/git
+
+	sudo -u git -H git clone -b gl-v320 \
+	https://github.com/gitlabhq/gitolite.git /home/git/gitolite
+
+	# Add Gitolite scripts to $PATH
+	sudo -u git -H mkdir /home/git/bin
+	sudo -u git -H sh -c 'printf "%b\n%b\n" "PATH=\$PATH:/home/git/bin" "export PATH" >> /home/git/.profile'
+	sudo -u git -H sh -c 'gitolite/install -ln /home/git/bin'
+
+	# Copy the gitlab user's (public) SSH key ...
+	sudo cp /home/gitlab/.ssh/id_rsa.pub /home/git/gitlab.pub
+	sudo chmod 0444 /home/git/gitlab.pub	
+
+	# ... and use it as the admin key for the Gitolite setup
+	sudo -u git -H sh -c "PATH=/home/git/bin:$PATH; gitolite setup -pk /home/git/gitlab.pub"
+
+	# Make sure the Gitolite config dir is owned by git
+	sudo chmod 750 /home/git/.gitolite/
+	sudo chown -R git:git /home/git/.gitolite/
+	
+	# Make sure the repositories dir is owned by git and it stays that way
+	sudo chmod -R ug+rwXs,o-rwx /home/git/repositories/
+	sudo chown -R git:git /home/git/repositories/
+
+	# Adds localhost ssh key to gitlab's known_hosts
+	sudo -u gitlab -H sh -c 'ssh-keyscan -H localhost >> ~/.ssh/known_hosts'
+}
+
+function test_gitolite() {
+	# Clone the admin repo so SSH adds localhost to known_hosts ...
+	# ... and to be sure your users have access to Gitolite
+	sudo -u gitlab -H git clone git@localhost:gitolite-admin.git /tmp/gitolite-admin
+
+	# If it succeeded without errors you can remove the cloned repo
+	sudo rm -rf /tmp/gitolite-admin
+}
+
+function install_gitlab() {
+	# We'll install GitLab into home directory of the user "gitlab"
+	cd /home/gitlab
+
+	# Clone GitLab repository
+	sudo -u gitlab -H git clone https://github.com/gitlabhq/gitlabhq.git gitlab
+
+	# Go to gitlab dir 
+	cd /home/gitlab/gitlab
+
+	# Checkout to stable release
+	sudo -u gitlab -H git checkout 4-1-stable
+}
+
+function configure_gitlab() {
+	cd /home/gitlab/gitlab
+
+	# Copy the example GitLab config
+	#sudo -u gitlab -H cp config/gitlab.yml.example config/gitlab.yml
+
+	# Updates the host name in gitlab.yml to the one given in the
+	# charm config
+	host=`config-get host`
+	# TODO: add default values
+	sudo -u gitlab -H sh -c "sed -e 's/^  host: localhost/  host: $host/g' < config/gitlab.yml.example > config/gitlab.yml"
+
+	# TODO: update other config items in gitlab.yml
+	# sed -itmp
+
+	# Make sure GitLab can write to the log/ and tmp/ directories
+	sudo chown -R gitlab log/
+	sudo chown -R gitlab tmp/
+	sudo chmod -R u+rwX  log/
+	sudo chmod -R u+rwX  tmp/
+
+	# Make directory for satellites
+	sudo -u gitlab -H mkdir /home/gitlab/gitlab-satellites
+	
+	# Copy the example Unicorn config
+	sudo -u gitlab -H cp config/unicorn.rb.example config/unicorn.rb
+}
+
+function configure_git {
+	sudo -u gitlab -H git config --global user.name "GitLab"
+	# TODO: get from charm config.yaml
+	sudo -u gitlab -H git config --global user.email "gitlab@localhost"
+}
+
+function setup_gitlab_hooks() {
+	cd ~gitlab/gitlab
+	sudo cp ./lib/hooks/post-receive /home/git/.gitolite/hooks/common/post-receive
+	sudo chown git:git /home/git/.gitolite/hooks/common/post-receive
+	cd -
+}
+
+function init_script() {
+	sudo curl --output /etc/init.d/gitlab https://raw.github.com/gitlabhq/gitlab-recipes/4-1-stable/init.d/gitlab
+	sudo chmod +x /etc/init.d/gitlab
+	sudo update-rc.d gitlab defaults 21
+}
+
+function config_nginx() {
+	sudo curl --output /etc/nginx/sites-available/gitlab https://raw.github.com/gitlabhq/gitlab-recipes/4-1-stable/nginx/gitlab
+	sudo ln -s /etc/nginx/sites-available/gitlab /etc/nginx/sites-enabled/gitlab
+	# TODO: allow for config of hostname
+	sed -i -e 's/YOUR_SERVER_IP/0.0.0.0/g' /etc/nginx/sites-available/gitlab
+	sed -i -e "s/YOUR_SERVER_FQDN/$hostname/g" /etc/nginx/sites-available/gitlab
+	sed -i -e "s/# server_names_hash_bucket_size 64/server_names_hash_bucket_size 128/g" /etc/nginx/nginx.conf
+}
+
+resolve_dependencies
+create_users
+install_gitolite
+install_gitlab
+configure_gitlab
+configure_git
+setup_gitlab_hooks
+init_script
+config_nginx

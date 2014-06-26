@@ -1,0 +1,807 @@
+#!/bin/bash -e
+
+shopt -s extglob
+
+readonly CORES=5
+REMOTE_SERVICE=${JUJU_REMOTE_UNIT%\/+([0-9])}
+readonly SERVICE=${JUJU_UNIT_NAME%\/+([0-9])}
+readonly TEMP=/var/tmp
+
+checkChecksum()
+{
+	if [[ $(md5sum "$1" | cut -d " " -f 1) != $2 ]]; then
+		juju-log --log-level CRITICAL "Checksum of $1 failed"
+		exit 1
+	fi
+}
+
+checkDatabase()
+{
+	if [[ -z $(relation-get database) ]]; then
+		juju-log "Database not ready"
+		exit 0
+	fi
+}
+
+checkMaster()
+{
+	if [[ -z $(relation-get cores) ]]; then
+		juju-log "Master not ready"
+		exit 0
+	fi
+}
+
+checkReplication()
+{
+	if [[ -n $(relation-get cores "$JUJU_UNIT_NAME") ]]; then
+		exit 0
+	fi
+}
+
+configAdminSecurity()
+{
+	cat <<-"EOF"
+		  <security-constraint>
+		    <web-resource-collection>
+		      <web-resource-name>Solr Admin</web-resource-name>
+		      <url-pattern>/*</url-pattern>
+		    </web-resource-collection>
+		EOF
+	if [[ -n $1 ]]; then
+		cat <<-"EOF"
+			    <auth-constraint>
+			      <role-name>solr-admin</role-name>
+			    </auth-constraint>
+			EOF
+	fi
+	echo "  </security-constraint>"
+}
+
+configCore()
+{
+	echo "    <core name=\"$1\" instanceDir=\"$1\"/>"
+}
+
+configCores()
+{
+	echo '<solr persistent="false" sharedLib="lib">' > "$1/01-solr"
+	echo '  <cores adminPath="/admin/cores" defaultCoreName="core0">' > "$1/10-cores"
+	echo '    <core name="core0" instanceDir="core0"/>' > "$1/15-core0"
+	echo "  </cores>" > "$1/19-cores"
+	echo "</solr>" > "$1/90-solr"
+}
+
+configDIH()
+{
+	echo "<dataConfig>" > "$1/01-dataConfig"
+	echo "</dataConfig>" > "$1/90-dataConfig"
+	cp files/format "$1/99-format"
+	chmod +x "$1/99-format"
+}
+
+configDIHHandler()
+{
+	cat <<-"EOF"
+		  <requestHandler name="/dataimport" class="org.apache.solr.handler.dataimport.DataImportHandler">
+		    <lst name="defaults">
+		      <str name="config">data-config.xml</str>
+		    </lst>
+		  </requestHandler>
+		EOF
+}
+
+configDatasource()
+{
+	echo "<dataSource type=\"JdbcDataSource\" driver=\"$(xmlstarlet esc "$1")\" url=\"$(xmlstarlet esc "$2")\" user=\"$(xmlstarlet esc "$3")\" password=\"$(xmlstarlet esc "$4")\"/>"
+}
+
+configJMXListener()
+{
+	echo '  <Listener className="org.apache.catalina.mbeans.JmxRemoteLifecycleListener" rmiRegistryPortPlatform="10001" rmiServerPortPlatform="10002"/>'
+}
+
+configJMXPasswords()
+{
+	cat <<-EOF
+		monitorRole $1
+		controlRole $2
+		EOF
+}
+
+configLuceneVersion()
+{
+	echo "  <luceneMatchVersion>$1</luceneMatchVersion>"
+}
+
+configMaster()
+{
+	cat <<-"EOF"
+		    <lst name="master">
+		      <str name="replicateAfter">startup</str>
+		      <str name="replicateAfter">commit</str>
+		      <str name="replicateAfter">optimize</str>
+		      <str name="confFiles">schema.xml</str>
+		    </lst>
+		EOF
+}
+
+configSearchSecurity()
+{
+	restricted=$1
+	shift
+	cat <<-"EOF"
+		  <security-constraint>
+		    <web-resource-collection>
+		      <web-resource-name>Solr Search</web-resource-name>
+		      <url-pattern>/analysis/*</url-pattern>
+		      <url-pattern>/debug/dump/*</url-pattern>
+		      <url-pattern>/select/*</url-pattern>
+		      <url-pattern>/terms/*</url-pattern>
+		      <url-pattern>/tvrh/*</url-pattern>
+		EOF
+	for core; do
+		cat <<-EOF
+			      <url-pattern>/$core/analysis/*</url-pattern>
+			      <url-pattern>/$core/debug/dump/*</url-pattern>
+			      <url-pattern>/$core/select/*</url-pattern>
+			      <url-pattern>/$core/terms/*</url-pattern>
+			      <url-pattern>/$core/tvrh/*</url-pattern>
+			EOF
+	done
+	echo "    </web-resource-collection>"
+	if [[ -n $restricted ]]; then
+		cat <<-"EOF"
+			    <auth-constraint>
+			      <role-name>solr-search</role-name>
+			    </auth-constraint>
+			EOF
+	fi
+	echo "  </security-constraint>"
+}
+
+configSlave()
+{
+	cat <<-EOF
+		    <lst name="slave">
+		      <str name="masterUrl">http://$1:8080/solr/$2/replication</str>
+		      <str name="pollInterval">00:00:20</str>
+		EOF
+	if [[ -n $3 ]]; then
+		cat <<-EOF
+			      <str name="httpBasicAuthUser">solr-admin</str>
+			      <str name="httpBasicAuthPassword">$3</str>
+			EOF
+	fi
+	echo "    </lst>"
+}
+
+configUpdateSecurity()
+{
+	restricted=$1
+	shift
+	cat <<-"EOF"
+		  <security-constraint>
+		    <web-resource-collection>
+		      <web-resource-name>Solr Update</web-resource-name>
+		      <url-pattern>/update/*</url-pattern>
+		EOF
+	for core; do
+		echo "      <url-pattern>/$core/update/*</url-pattern>"
+	done
+	echo "    </web-resource-collection>"
+	if [[ -n $restricted ]]; then
+		cat <<-"EOF"
+			    <auth-constraint>
+			      <role-name>solr-update</role-name>
+			    </auth-constraint>
+			EOF
+	fi
+	echo "  </security-constraint>"
+}
+
+configUsers()
+{
+	cat <<-EOF
+		<?xml version="1.0" encoding="UTF-8"?>
+		<tomcat-users>
+		  <role rolename="solr-admin"/>
+		  <role rolename="solr-update"/>
+		  <role rolename="solr-search"/>
+		  <user username="solr-admin" password="$(xmlstarlet esc "$1")" roles="solr-admin,solr-update,solr-search"/>
+		  <user username="solr-update" password="$(xmlstarlet esc "$2")" roles="solr-update,solr-search"/>
+		  <user username="solr-search" password="$(xmlstarlet esc "$3")" roles="solr-search"/>
+		</tomcat-users>
+		EOF
+}
+
+configure()
+{
+	juju-log "Configuring solr"
+	jmx_opts=""
+	dir=$(dotdee -d /etc/tomcat6/server.xml)
+	if [[ $(config-get jmx-enabled) == True ]]; then
+		if [[ ! -e $dir/04-jmx-listener ]]; then
+			configJMXListener $(config-get jmx-localhost) > "$dir/04-jmx-listener"
+			dotdee -u /etc/tomcat6/server.xml
+		fi
+		jmx_opts="-Dcom.sun.management.jmxremote.ssl=false"
+		jmx_opts+=" -Dcom.sun.management.jmxremote.access.file=/etc/tomcat6/jmxremote.access"
+		jmx_opts+=" -Dcom.sun.management.jmxremote.password.file=/etc/tomcat6/jmxremote.password"
+		if [[ $(config-get jmx-localhost) == True ]]; then
+			jmx_opts+=" -Djava.rmi.server.hostname=localhost"
+		else
+			jmx_opts+=" -Djava.rmi.server.hostname=$(unit-get private-address)"
+		fi
+	else
+		if [[ -e $dir/04-jmx-listener ]]; then
+			rm -f "$dir/04-jmx-listener"
+			dotdee -u /etc/tomcat6/server.xml
+		fi
+	fi
+	dir=$(dotdee -d /etc/default/tomcat6)
+	echo -n 'JAVA_OPTS="-Djava.awt.headless=true' $jmx_opts $(config-get java-opts) \
+		> "$dir/60-javaopts"; echo '"' >> "$dir/60-javaopts"
+	dotdee -u /etc/default/tomcat6
+	configJMXPasswords "$(config-get jmx-monitor-password)" "$(config-get jmx-control-password)" \
+		> /etc/tomcat6/jmxremote.password
+	configUsers "$(config-get admin-password)" "$(config-get update-password)" "$(config-get search-password)" \
+		> /etc/tomcat6/tomcat-users.xml
+	for ((c = 0; c < CORES; c++)); do
+		configureCore $c
+	done
+	configureSecurity
+}
+
+configureCore()
+{
+	juju-log "Configuring core$1"
+	prefix=""
+	if (($1 >= 1)); then
+		prefix=core$1-
+		cores_dir=$(dotdee -d /etc/solr/solr.xml)
+		if [[ $(config-get ${prefix}enabled) == True ]]; then
+			createCore core$1
+			if [[ ! -e $cores_dir/15-core$1 ]]; then
+				configCore core$1 > "$cores_dir/15-core$1"
+				dotdee -u /etc/solr/solr.xml
+			fi
+		else
+			if [[ -e $cores_dir/15-core$1 ]]; then
+				rm -f "$cores_dir/15-core$1"
+				dotdee -u /etc/solr/solr.xml
+			fi
+		fi
+	fi
+	if [[ -e /var/lib/solr/core$1 ]]; then
+		configureLuceneVersion core$1
+	fi
+	schema=$(config-get ${prefix}schema)
+	if [[ -n $schema ]]; then
+		createCore core$1
+		base64 -d <<<"$schema" > /etc/solr/core$1-conf/schema.xml
+	fi
+	config=$(config-get ${prefix}dih-config)
+	if [[ -n $config ]]; then
+		config=$(base64 -d <<<"$config")
+		if ! xmlstarlet sel -t -c /dataConfig/document <<<"$config" > /dev/null; then
+			juju-log --log-level ERROR "Missing 'document' element or bad DIH config"
+			exit 1
+		fi
+		createCore core$1
+		createDIHConfig core$1
+		dir=$(dotdee -d /etc/solr/core$1-conf/data-config.xml)
+		(umask 0027; xmlstarlet sel -t -c /dataConfig/document <<<"$config" > "$dir/40-document")
+		dotdee -u /etc/solr/core$1-conf/data-config.xml
+	else
+		if [[ -e /etc/solr/core$1-conf/data-config.xml ]]; then
+			dir=$(dotdee -d /etc/solr/core$1-conf/data-config.xml)
+			if [[ -e $dir/40-document ]]; then
+				rm -f "$dir/40-document"
+				dotdee -u /etc/solr/core$1-conf/data-config.xml
+			fi
+		fi
+	fi
+	configureDatasource core$1
+	configureDIHHandler core$1
+}
+
+configureDIHHandler()
+{
+	if [[ -e /etc/solr/$1-conf/data-config.xml ]]; then
+		dir=$(dotdee -d "/etc/solr/$1-conf/solrconfig.xml")
+		d=$(dotdee -d "/etc/solr/$1-conf/data-config.xml")
+		if ls "$d"/20-* &> /dev/null && [[ -e $d/40-document ]]; then
+			if [[ ! -e $dir/45-dihHandler ]]; then
+				(umask 0027; configDIHHandler > "$dir/45-dihHandler")
+				dotdee -u "/etc/solr/$1-conf/solrconfig.xml"
+			fi
+			if [[ ! -e /etc/solr/$1-conf/dataimport.properties ]]; then
+				touch "/etc/solr/$1-conf/dataimport.properties"
+				chown tomcat6:tomcat6 "/etc/solr/$1-conf/dataimport.properties"
+			fi
+		else
+			if [[ -e $dir/45-dihHandler ]]; then
+				rm -f "$dir/45-dihHandler"
+				dotdee -u "/etc/solr/$1-conf/solrconfig.xml"
+			fi
+		fi
+	fi
+}
+
+configureDatasource()
+{
+	service=${db_service[$1]}
+	database=${db_database[$1]:-$SERVICE}
+	if [[ -n $service ]]; then
+		if [[ -n $database && -e /etc/solr/${service}_$database.db ]]; then
+			createDatasource "$1" "/etc/solr/${service}_$database.db"
+		elif [[ -e /etc/solr/$service.db ]]; then
+			createDatasource "$1" "/etc/solr/$service.db"
+		else
+			removeDatasource "$1"
+		fi
+	else
+		removeDatasource "$1"
+	fi
+}
+
+configureDatasources()
+{
+	for ((c = 0; c < CORES; c++)); do
+		configureDatasource core$c
+		configureDIHHandler core$c
+	done
+}
+
+configureLuceneVersion()
+{
+	dir=$(dotdee -d /etc/solr/$1-conf/solrconfig.xml)
+	(umask 0027; configLuceneVersion $(config-get lucene-version) > "$dir/04-lucene")
+	dotdee -u /etc/solr/$1-conf/solrconfig.xml
+}
+
+configureMaster()
+{
+	if [[ -e /etc/solr/master.cores ]]; then
+		cores=$(< /etc/solr/master.cores)
+	else
+		juju-log "Configuring master"
+		cores=""
+		dir=$(dotdee -d /etc/solr/solr.xml)
+		for core in "$dir"/15-*; do
+			c=$(basename "$core"); c=${c:3}
+			d=$(dotdee -d /etc/solr/$c-conf/solrconfig.xml)
+			(umask 0027; configMaster > "$d/54-master")
+			dotdee -u /etc/solr/$c-conf/solrconfig.xml
+			cores+=" $c"
+		done
+		cores=$(echo $cores)
+		echo "$cores" > /etc/solr/master.cores
+		restart_required=true
+	fi
+}
+
+configureMysql()
+{
+	juju-log "Configuring mysql for $REMOTE_SERVICE"
+        host=$(relation-get db_host)
+	if [[ -n $host ]]; then
+		database=$(relation-get database "$JUJU_UNIT_NAME")
+		user=$(relation-get username "$JUJU_UNIT_NAME")
+        	password=$(relation-get password)
+		if [[ -e /etc/solr/${REMOTE_SERVICE}_$database.db.part ]]; then
+			juju-log "Adding database $database"
+			echo -e "com.mysql.jdbc.Driver\tjdbc:mysql://$host/$database\t$user\t$password" \
+				> "/etc/solr/${REMOTE_SERVICE}_$database.db.part"
+			mv "/etc/solr/${REMOTE_SERVICE}_$database.db.part" \
+				"/etc/solr/${REMOTE_SERVICE}_$database.db"
+		fi
+	fi
+	for part in "/etc/solr/${REMOTE_SERVICE}_"*.db.part; do
+		[[ -e $part ]] || continue
+		file=$(basename "$part")
+		database=$(sed -e "s/^${REMOTE_SERVICE}_\(.\+\)\.db\.part$/\1/" <<<"$file")
+		relation-set "hostname=$(unit-get private-address)" "database=$database" "username=$SERVICE-$database"
+		exit 0
+	done
+}
+
+configurePostgresql()
+{
+	juju-log "Configuring postgresql for $REMOTE_SERVICE"
+	host=$(relation-get host)
+        database=$(relation-get database)
+        user=$(relation-get user)
+        password=$(relation-get password)
+	(umask 0077; echo -e "org.postgresql.Driver\tjdbc:postgresql://$host/$database\t$user\t$password" > "/etc/solr/$REMOTE_SERVICE.db")
+}
+
+configureSecurity()
+{
+	cores=""
+	dir=$(dotdee -d /etc/solr/solr.xml)
+	for core in "$dir"/15-*; do
+		c=$(basename "$core"); c=${c:3}
+		cores+=" $c"
+	done
+	dir=$(dotdee -d /etc/solr/web.xml)
+	configAdminSecurity "$(config-get admin-password)" $cores > "$dir/70-admin"
+	configUpdateSecurity "$(config-get update-password)" $cores > "$dir/70-update"
+	configSearchSecurity "$(config-get search-password)" $cores > "$dir/70-search"
+	dotdee -u /etc/solr/web.xml
+}
+
+configureSlave()
+{
+	juju-log "Configuring slave"
+	cores_dir=$(dotdee -d /etc/solr/solr.xml)
+	for core in "$cores_dir"/15-*; do
+		c=$(basename "$core"); c=${c:3}
+		dir=$(dotdee -d /etc/solr/$c-conf/solrconfig.xml)
+		if [[ ! -e $dir/54-master ]]; then
+			rm -f "$core"
+		fi
+	done
+	for core in $(relation-get cores); do
+		createCore $core
+		dir=$(dotdee -d /etc/solr/$core-conf/solrconfig.xml)
+        	(umask 0027; configSlave "$(relation-get private-address)" $core "$(relation-get admin-password)" \
+			> "$dir/56-slave")
+        	dotdee -u /etc/solr/$core-conf/solrconfig.xml
+		chmod +t,g+w /etc/solr/$core-conf
+		chown :tomcat6 /etc/solr/$core-conf
+		chown tomcat6:tomcat6 /etc/solr/$core-conf/schema.xml
+		if [[ ! -e $cores_dir/15-$core ]]; then
+			configCore $core > "$cores_dir/15-$core"
+		fi
+	done
+	dotdee -u /etc/solr/solr.xml
+	configureSecurity
+}
+
+createCore()
+{
+	if [[ ! -e /var/lib/solr/$1 ]]; then
+		juju-log "Creating core $1"
+		mkdir "/var/lib/solr/$1"
+		cp -r /usr/local/share/apache-solr/example/solr/conf "/etc/solr/$1-conf"
+		(cd "/var/lib/solr/$1"; ln -s "/etc/solr/$1-conf" conf)
+		rm -f "/etc/solr/$1-conf/solrconfig.xml"
+		(umask 0027; touch "/etc/solr/$1-conf/solrconfig.xml")
+		chown :tomcat6 "/etc/solr/$1-conf/solrconfig.xml"
+		dotdee -s "/etc/solr/$1-conf/solrconfig.xml"
+		dir=$(dotdee -d "/etc/solr/$1-conf/solrconfig.xml")
+		(umask 0027; cp files/solrconfig.xml.d/* "$dir")
+		dotdee -u "/etc/solr/$1-conf/solrconfig.xml"
+		(umask 0077; mkdir "/var/lib/solr/$1/data")
+		chown tomcat6:tomcat6 "/var/lib/solr/$1/data"
+		configureLuceneVersion "$1"
+	fi
+}
+
+createDBRelationId()
+{
+	echo "$REMOTE_SERVICE" > /etc/solr/$JUJU_RELATION_ID.relation
+}
+
+createDIHConfig()
+{
+	if [[ ! -e /etc/solr/$1-conf/data-config.xml ]]; then
+		(umask 0027; touch "/etc/solr/$1-conf/data-config.xml")
+		chown :tomcat6 "/etc/solr/$1-conf/data-config.xml"
+		dotdee -s "/etc/solr/$1-conf/data-config.xml"
+		dir=$(dotdee -d "/etc/solr/$1-conf/data-config.xml")
+		(umask 0027; configDIH "$dir")
+		dotdee -u "/etc/solr/$1-conf/data-config.xml"
+	fi
+}
+
+createDatasource()
+{
+	createCore "$1"
+	createDIHConfig "$1"
+	IFS="	" read driver url user password < "$2"
+	dir=$(dotdee -d "/etc/solr/$1-conf/data-config.xml")
+	database=$(basename "$2" .db)
+	if [[ ! -e $dir/20-$database ]]; then
+		rm -f "$dir"/20-*
+		(umask 0027; configDatasource $driver $url "$user" "$password" > "$dir/20-$database")
+		dotdee -u "/etc/solr/$1-conf/data-config.xml"
+	fi
+}
+
+createMysqlDatasources()
+{
+	for ((c = 0; c < CORES; c++)); do
+		service=${db_service[core$c]}
+		if [[ $service == $REMOTE_SERVICE ]]; then
+			database=${db_database[core$c]:-$SERVICE}
+			if [[ ! -e /etc/solr/${service}_$database.db.part ]]; then
+				(umask 0077; touch "/etc/solr/${service}_$database.db.part")
+			fi
+		fi
+	done
+}
+
+destroyDBRelation()
+{
+	setDBRelationId
+	parseDBConfig
+	removeDB
+	restart
+	removeDBRelationId
+}
+
+installMysql()
+{
+	if [[ ! -e /var/lib/solr/lib/mysql-connector-java.jar ]]; then
+		juju-log "Installing mysql jdbc driver..."
+		apt-get -y install libmysql-java
+		(cd /var/lib/solr/lib; ln -s /usr/share/java/mysql-connector-java.jar)
+	fi
+}
+
+installPackages()
+{
+	apt-get -y install wget
+
+	juju-log "Downloading solr..."
+	url=$(config-get dist-url)
+	wget -nv -c -P "$TEMP" $url
+	dist=$(basename $url)
+	checkChecksum "$TEMP/$dist" $(config-get dist-md5)
+
+	juju-log "Installing solr..."
+
+	apt-get -y install tomcat6 tomcat6-extras dotdee unzip xmlstarlet curl
+	service tomcat6 stop 2> /dev/null || true
+	service dotdee stop 2> /dev/null || true
+	cp /dev/null /etc/init/dotdee.conf
+
+	removeConfig /etc/tomcat6/server.xml
+	cp /dev/null /etc/tomcat6/server.xml
+	dotdee -s /etc/tomcat6/server.xml
+	dir=$(dotdee -d /etc/tomcat6/server.xml)
+	cp files/server.xml.d/* "$dir"
+	dotdee -u /etc/tomcat6/server.xml
+	removeConfig /etc/default/tomcat6
+	dotdee -s /etc/default/tomcat6
+	cp files/jmxremote.access /etc/tomcat6
+	(umask 0077; cp /dev/null /etc/tomcat6/jmxremote.password)
+	chown tomcat6:tomcat6 /etc/tomcat6/jmxremote.password
+	rm -rf /var/lib/tomcat6/webapps/*
+	rm -f /etc/tomcat6/Catalina/localhost/*
+
+	tar -C /usr/local/share -xzf "$TEMP/$dist"
+	(cd /usr/local/share; ln -snf "$(basename "$dist" .tgz)" apache-solr)
+	unzip -uoq -d /usr/local/share/apache-solr/dist/apache-solr \
+		/usr/local/share/apache-solr/dist/apache-solr-*.war
+	mkdir -p /etc/solr
+	removeConfig /etc/solr/web.xml
+	cp /dev/null /etc/solr/web.xml
+	dotdee -s /etc/solr/web.xml
+	dir=$(dotdee -d /etc/solr/web.xml)
+	cp files/web.xml.d/* "$dir"
+	dotdee -u /etc/solr/web.xml
+	(cd /usr/local/share/apache-solr/dist/apache-solr/WEB-INF; ln -sf /etc/solr/web.xml)
+	cp files/solr.xml /etc/tomcat6/Catalina/localhost
+	(cd /var/lib/tomcat6/webapps; ln -snf /usr/local/share/apache-solr/dist/apache-solr solr)
+	mkdir -p /var/lib/solr /var/lib/solr/lib
+	removeConfig /etc/solr/solr.xml
+	cp /dev/null /etc/solr/solr.xml
+	dotdee -s /etc/solr/solr.xml
+	dir=$(dotdee -d /etc/solr/solr.xml)
+	configCores "$dir"
+	dotdee -u /etc/solr/solr.xml
+	(cd /var/lib/solr; ln -sf /etc/solr/solr.xml)
+	createCore core0
+}
+
+installPostgresql()
+{
+	if [[ ! -e /var/lib/solr/lib/postgresql.jar ]]; then
+		juju-log "Installing postgresql jdbc driver..."
+		apt-get -y install libpg-java
+		(cd /var/lib/solr/lib; ln -s /usr/share/java/postgresql.jar)
+	fi
+}
+
+openPorts()
+{
+	juju-log "Opening ports for solr"
+	open-port 8080
+}
+
+parseDBConfig()
+{
+	unset db_service db_database
+	declare -Ag db_service db_database
+	IFS="," read -a tokens <<<"$(config-get db-config)"
+	for token in "${tokens[@]}"; do
+		IFS=":" read core service database other <<<"$token"
+		if [[ -z $core ]]; then
+			db_service[core0]=$service
+			db_database[core0]=$database
+		elif [[ $core =~ core[0-9]+ ]]; then
+			db_service[$core]=$service
+			db_database[$core]=$database
+		fi
+	done
+}
+
+removeConfig()
+{
+	if dotdee -d "$1" 2> /dev/null; then
+		dotdee --undo "$1"
+		rm -rf "/etc/dotdee$1" "/etc/dotdee$1.d"
+	fi
+}
+
+removeDB()
+{
+	juju-log "Removing database for $REMOTE_SERVICE"
+	for ((c = 0; c < CORES; c++)); do
+		service=${db_service[core$c]}
+		if [[ $service == $REMOTE_SERVICE ]]; then
+			removeDatasource core$c
+			configureDIHHandler core$c
+		fi
+	done
+	rm -f /etc/solr/${REMOTE_SERVICE}_*.db \
+		/etc/solr/${REMOTE_SERVICE}_*.db.part \
+		/etc/solr/$REMOTE_SERVICE.db
+}
+
+removeDBRelationId()
+{
+	rm -f /etc/solr/$JUJU_RELATION_ID.relation
+}
+
+removeDatasource()
+{
+	if [[ -e /etc/solr/$1-conf/data-config.xml ]]; then
+		dir=$(dotdee -d "/etc/solr/$1-conf/data-config.xml")
+		if ls "$dir"/20-* &> /dev/null; then
+			rm -f "$dir"/20-*
+			dotdee -u "/etc/solr/$1-conf/data-config.xml"
+		fi
+	fi
+}
+
+removeMaster()
+{
+	if [[ -e /etc/solr/master.cores && ( $(relation-ids) == [] ) ]]; then
+		juju-log "Removing master"
+		for core in /var/lib/solr/core*; do
+			c=$(basename $core)
+			dir=$(dotdee -d /etc/solr/$c-conf/solrconfig.xml)
+			rm -f "$dir/54-master"
+			dotdee -u /etc/solr/$c-conf/solrconfig.xml
+		done
+		rm -f /etc/solr/master.cores
+		restart_required=true
+	fi
+}
+
+removeSlave()
+{
+	juju-log "Removing slave"
+	for core in /var/lib/solr/core*; do
+		c=$(basename $core)
+		dir=$(dotdee -d /etc/solr/$c-conf/solrconfig.xml)
+		if [[ -e $dir/56-slave ]]; then
+			rm -f "$dir/56-slave"
+			dotdee -u /etc/solr/$c-conf/solrconfig.xml
+			chmod -t,g-w /etc/solr/$c-conf
+			chown :root /etc/solr/$c-conf
+			chown root:root /etc/solr/$c-conf/schema.xml
+		fi
+	done
+}
+
+restart()
+{
+	if service tomcat6 status > /dev/null; then
+		juju-log "Restarting solr"
+		service tomcat6 restart
+	fi
+}
+
+setDBRelationId()
+{
+	REMOTE_SERVICE=$(< /etc/solr/$JUJU_RELATION_ID.relation)
+}
+
+start()
+{
+	if ! service tomcat6 status > /dev/null; then
+		juju-log "Starting solr"
+		service tomcat6 start
+	fi
+}
+
+stop()
+{
+	if service tomcat6 status > /dev/null; then
+		juju-log "Stopping solr"
+		service tomcat6 stop
+	fi
+}
+
+cmd=$(basename "$0")
+case "$cmd" in
+config-changed)
+	parseDBConfig
+	configure
+	restart
+	;;
+db-mysql-relation-broken)
+	destroyDBRelation
+	;;
+db-mysql-relation-changed)
+	configureMysql
+	parseDBConfig
+	configureDatasources
+	restart
+	;;
+db-mysql-relation-joined)
+	createDBRelationId
+	installMysql
+	parseDBConfig
+	createMysqlDatasources
+	;;
+db-pgsql-relation-broken)
+	destroyDBRelation
+	;;
+db-pgsql-relation-changed)
+	checkDatabase
+	installPostgresql
+	configurePostgresql
+	parseDBConfig
+	configureDatasources
+	restart
+	;;
+db-pgsql-relation-joined)
+	createDBRelationId
+	;;
+install)
+	installPackages
+	openPorts
+	;;
+master-relation-broken)
+	removeMaster
+	if [[ -n $restart_required ]]; then
+		restart
+	fi
+	;;
+master-relation-joined)
+	checkReplication
+	configureMaster
+	if [[ -n $restart_required ]]; then
+		restart
+	fi
+	relation-set "cores=$cores" "admin-password=$(config-get admin-password)"
+	;;
+slave-relation-broken)
+	removeSlave
+	restart
+	;;
+slave-relation-changed)
+	checkMaster
+	configureSlave
+	restart
+	;;
+start)
+	start
+	;;
+stop)
+	stop
+	;;
+upgrade-charm)
+	parseDBConfig
+	configure
+	restart
+	;;
+*)
+	;;
+esac

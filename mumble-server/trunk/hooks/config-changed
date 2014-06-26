@@ -1,0 +1,21 @@
+#!/bin/bash
+set -ex
+
+PASSWORD=$(config-get password)
+START=true
+
+# Since default configuration values are not validated by juju, we
+# must look for the default here and abort the bring-up process.
+if [ -z "$PASSWORD" ] || [ "$PASSWORD" = "unset" ]; then
+    juju-log "Valid SuperUser password not set -- not starting server"
+    START=false
+else
+    juju-log "Setting Ice secret."
+    perl -pi -e "s/^icesecretwrite=.*/icesecretwrite=$PASSWORD/" /etc/mumble-server.ini
+fi
+
+juju-log "Passing configuration into debconf."
+echo set mumble-server/start_daemon "$START" | debconf-communicate
+echo set mumble-server/password "$PASSWORD" | debconf-communicate
+echo set mumble-server/use_capabilities true | debconf-communicate
+dpkg-reconfigure -fnoninteractive -pcritical mumble-server

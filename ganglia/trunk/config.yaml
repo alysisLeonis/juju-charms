@@ -1,0 +1,33 @@
+options:
+    gridname:
+        type: string
+        default: everything
+        description: |
+            Name of the default grid into which all services
+            being monitored get automatically placed.
+    dead_host_timeout:
+        type: int
+        default: 3600
+        description: |
+            Number of seconds after which a host is considered
+            removed from the configuration and will be dropped
+            by ganglia.
+    source:
+        type: string
+        description: |
+            Optional configuration to support use of additional
+            sources such as:
+            .
+                - ppa:myteam/myppa
+                - cloud:folsom-proposed
+                - http://my.archive.com/ubuntu main
+            .
+            The last option should be used in conjunction with
+            the key configuration option.
+    key:
+        type: string
+        description: |
+            Key to import to the apt keyring to support use
+            with arbitary source configuration from outside
+            of launchpad archives or PPA's
+

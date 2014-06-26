@@ -1,0 +1,60 @@
+#!/bin/bash
+
+set -e
+
+juju-log "Adding Juju helper PPA"
+add-apt-repository -y ppa:charmers/charm-helpers
+apt-get update
+
+juju-log "Installing required packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get install -y libapache2-mod-php5 php5-mysql php5-curl php5-gd php5-cli postfix wget charm-helper-sh rsync
+
+juju-log "Downloading and verifying StatusNet"
+. /usr/share/charm-helper/sh/net.sh
+DOWNLOAD=`ch_get_file http://status.net/statusnet-1.0.1.tar.gz 727a7cfe7e9531b732739dabd295bcb9`
+
+if [ -z "$DOWNLOAD" ]; then
+	juju-log "Failed to retrieve download"
+	exit 1
+fi
+
+juju-log "Extracting StatusNet"
+cd /var/www
+
+juju-log "Relocating files to document root"
+pushd /tmp
+tar -xzf $DOWNLOAD
+rsync -r --delete statusnet-*/ /var/www
+rm -rf statusnet-* # only file left in folder is .gitignore
+popd
+mv htaccess.sample .htaccess
+
+juju-log "Patching .htaccess"
+sed -i "s:RewriteBase /mublog/::" .htaccess
+
+juju-log "Assigning file ownership"
+chown -R www-data:www-data .
+
+# Enable mod_rewrite
+a2enmod rewrite
+
+# Enable .htaccess overrides
+cat > /etc/apache2/sites-enabled/000-default <<EOD
+<VirtualHost *:80>
+    DocumentRoot /var/www
+    <Directory /var/www/>
+        Options Indexes FollowSymLinks MultiViews
+        AllowOverride All
+        Order allow,deny
+        allow from all
+    </Directory>
+</VirtualHost>
+EOD
+
+juju-log "Restarting Apache"
+service apache2 restart
+
+# Make port 80 available
+juju-log "Opening port 80"
+open-port 80/tcp

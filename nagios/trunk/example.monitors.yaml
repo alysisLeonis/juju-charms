@@ -1,0 +1,30 @@
+# Version of the spec, mostly ignored but 0.3 is the current one
+version: '0.3'
+# Dict with just 'local' and 'remote' as parts
+monitors:
+    # local monitors need an agent to be handled. See nrpe charm for
+    # some example implementations
+    local:
+        # procrunning checks for a running process named X (no path)
+        procrunning:
+            # Multiple procrunning can be defined, this is the "name" of it
+            nagios3:
+                min: 1
+                max: 1
+                executable: nagios3
+    # Remote monitors can be polled directly by a remote system
+    remote:
+        # do a request on the HTTP protocol
+        http:
+            nagios:
+                port: 80
+                path: /nagios3/
+                # expected status response (otherwise just look for 200)
+                status: 'HTTP/1.1 401'
+                # Use as the Host: header (the server address will still be used to connect() to)
+                host: www.fewbar.com
+        mysql:
+            # Named basic check
+            basic:
+                username: monitors
+                password: abcdefg123456

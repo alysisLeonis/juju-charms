@@ -1,0 +1,37 @@
+options:
+  mysql_root_password:
+    default: auto
+    type: string
+    description: MySQL root password
+  mysql_token:
+    default: auto
+    type: string
+    description: MySQL token for CloudFoundry
+  use_dyndns:
+    default: "False"
+    type: string
+    description: Use DynDNS.org dynamic dns?
+  dyndns_username:
+    default: ''
+    type: string
+    description: DynDNS username
+  dyndns_password:
+    default: ''
+    type: string
+    description: DynDNS password
+  dyndns_hostname:
+    default: cloudfoundry.dyndns.org
+    type: string
+    description: Base hostname to use with the DynDNS service
+  nats_username:
+    default: natsadmin
+    type: string
+    description: NATS server username
+  nats_password:
+    default: auto
+    type: string
+    description: NATS server password.  Automatically generated if 'auto'
+  nats_default_port:
+    default: 4222
+    type: int
+    description: Default port for the NATS server.

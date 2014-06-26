@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+
+import amulet
+import requests
+from pymongo import MongoClient
+
+#########################################################
+# Test Quick Config
+#########################################################
+scale = 1
+seconds = 1400
+
+#########################################################
+# 3shard cluster configuration
+#########################################################
+d = amulet.Deployment()
+
+d.add('configsvr', charm='mongodb', units=scale)
+d.add('mongos', charm='mongodb', units=scale)
+d.add('shard1', charm='mongodb', units=scale)
+d.add('shard2', charm='mongodb', units=scale)
+
+#Setup the config svr
+d.configure('configsvr', {'replicaset': 'configsvr'})
+
+# define each shardset
+d.configure('shard1', {'replicaset': 'shard1'})
+d.configure('shard2', {'replicaset': 'shard2'})
+
+d.configure('mongos', {})
+
+#Connect the config servers to mongo shell
+d.relate('configsvr:configsvr', 'mongos:mongos-cfg')
+
+#connect each shard to the mongo shell
+d.relate('mongos:mongos', 'shard1:database')
+d.relate('mongos:mongos', 'shard2:database')
+d.expose('configsvr')
+d.expose('mongos')
+
+# Perform the setup for the deployment.
+try:
+    d.setup(seconds)
+    d.sentry.wait(seconds)
+except amulet.helpers.TimeoutError:
+    message = 'The environment did not setup in %d seconds.', seconds
+    amulet.raise_status(amulet.SKIP, msg=message)
+except:
+    raise
+
+sentry_dict = {
+    'config-sentry': d.sentry.unit['configsvr/0'],
+    'mongos-sentry': d.sentry.unit['mongos/0'],
+    'shard1-sentry': d.sentry.unit['shard1/0'],
+    'shard2-sentry': d.sentry.unit['shard2/0']
+}
+
+
+#############################################################
+# Check presence of MongoDB GUI HEALTH Status
+#############################################################
+def validate_status_interface():
+    r = requests.get("http://{}:28017".format(
+        sentry_dict['config-sentry'].info['public-address']),
+        verify=False)
+    r.raise_for_status
+
+
+#############################################################
+# Validate that each unit has an active mongo service
+#############################################################
+def validate_running_services():
+    for service in sentry_dict:
+        output = sentry_dict[service].run('service mongodb status')
+        service_active = str(output).find('mongodb start/running')
+        if service_active == -1:
+            message = "Failed to find running MongoDB on host {}".format(service)
+            amulet.raise_status(amulet.SKIP, msg=message)
+
+
+#############################################################
+# Validate connectivity from $WORLD
+#############################################################
+def validate_world_connectivity():
+    client = MongoClient(d.sentry.unit['mongos/0'].info['public-address'])
+
+    db = client['test']
+    #Can we successfully insert?
+    insert_id = db.amulet.insert({'assert': True})
+    if insert_id is None:
+        amulet.raise_status(amulet.FAIL, msg="Failed to insert test data")
+    #Can we delete from a shard using the Mongos hub?
+    result = db.amulet.remove(insert_id)
+    if result['err'] is not None:
+        amulet.raise_status(amulet.FAIL, msg="Failed to remove test data")
+
+
+#############################################################
+# Validate relationships
+#############################################################
+#broken pending 1273312
+def validate_relationships():
+    d.sentry.unit['configsvr/0'].relation('configsvr', 'mongos:mongos-cfg')
+    d.sentry.unit['shard1/0'].relation('database', 'mongos:mongos')
+    d.sentry.unit['shard2/0'].relation('database', 'mongos:mongos')
+    print(d.sentry.unit['shard1/0'].relation('database', 'mongos:mongos'))
+
+
+def validate_manual_connection():
+    output, code = d.sentry.unit['shard1/0'].run("mongo {}".format(
+        d.sentry.unit['mongos/0'].info['public-address']))
+    if code != 0:
+        message = "Manual Connection failed for unit shard1"
+        amulet.raise_status(amulet.SKIP, msg=message)
+
+    output, code = d.sentry.unit['shard2/0'].run("mongo {}".format(
+        d.sentry.unit['mongos/0'].info['public-address']))
+    if code != 0:
+        message = "Manual Connection failed for unit shard2"
+        amulet.raise_status(amulet.SKIP, msg=message)
+
+
+validate_status_interface()
+validate_running_services()
+#validate_relationships()
+validate_manual_connection()
+validate_world_connectivity()

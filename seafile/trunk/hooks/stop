@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -eux
+
+TOPDIR="/opt/seafile"
+INSTALLPATH="${TOPDIR}/seafile-server-latest"
+SEAFILE_SCRIPT="${INSTALLPATH}/seafile.sh"
+SEAHUB_SCRIPT="${INSTALLPATH}/seahub.sh"
+
+${SEAFILE_SCRIPT} stop
+${SEAHUB_SCRIPT} stop

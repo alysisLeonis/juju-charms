@@ -1,0 +1,6 @@
+options:
+    password:
+        type: string
+        default: unset
+        description: Password for Mumble administrative account
+        validator: '.{8,}'

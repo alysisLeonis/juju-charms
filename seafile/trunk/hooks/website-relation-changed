@@ -1,0 +1,10 @@
+#!/bin/bash
+
+set -eux
+
+juju-log $JUJU_REMOTE_UNIT modified its settings
+juju-log Relation settings:
+relation-get
+juju-log Relation members:
+relation-list
+relation-set hostname=`unit-get private-address` port=`config-get seahub_port`

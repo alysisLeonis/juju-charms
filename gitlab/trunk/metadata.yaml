@@ -1,0 +1,10 @@
+name: gitlab
+summary: "Self hosted Git management software"
+maintainer: Helio L Mota <helio.mota@gmail.com>
+description: A fast, secure and stable solution based on Rails & Gitolite. Free and open-source Distributed under the MIT License. 
+provides:
+  website:
+    interface: http
+requires:
+  db:
+    interface: mysql

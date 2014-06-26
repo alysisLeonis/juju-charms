@@ -1,0 +1,73 @@
+#!/bin/sh
+
+set -e
+
+teardown() {
+    juju destroy-service mongodb
+}
+trap teardown EXIT
+
+juju deploy mongodb
+juju expose mongodb
+
+for try in `seq 1 600` ; do
+    host=`juju status | tests/get-unit-info mongodb public-address`
+    
+    if [ -z "$host" ] ; then
+        sleep 10
+    else
+        break
+    fi
+done
+
+if [ -z "$host" ] ; then
+    echo FAIL: host timed out
+    exit 1
+fi
+
+assert_unit_ready() {
+    for try in `seq 1 600` ; do
+        status=`juju status | tests/get-unit-info mongodb agent-state`
+        if [ "$status" != "started" ] ; then
+            sleep 10
+        else
+            echo "found status as $status"
+            break
+        fi
+    done
+
+    if [ -z "$status" ] ; then
+        echo FAIL: status timed out
+        exit 1
+    fi
+}
+
+assert_is_listening() {
+    local port=$1
+    tries=$2 
+    listening=""
+    for try in `seq 1 $tries` ; do
+        if ! nc $host $port < /dev/null ; then
+            continue
+        fi
+        listening="27017"
+        break
+    done
+
+    if [ -z "$listening" ] ; then
+       echo "FAIL: not listening on port $port after $tries retries"
+       return 1
+    else
+       echo "PASS: listening on port $port"
+       return 0
+    fi
+}
+
+assert_unit_ready
+
+assert_is_listening 27017 10
+
+juju set mongodb port=55555
+assert_is_listening 55555 200000
+echo PASS: config changes tests passed.
+exit 0

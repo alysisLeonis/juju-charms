@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -eu
+source "$(dirname $0)/common.sh"
+
+juju-log 'Install dependencies'
+apt-get install -y -qq build-essential python-software-properties libcurl4-openssl-dev libssl-dev zlib1g-dev
+
+juju-log 'Add Brightbox ppa'
+apt-add-repository -y ppa:brightbox/ruby-ng
+apt-get -qq update
+
+juju-log 'Install Nginx, Phusion Passenger and Ruby 1.9.3'
+apt-get install -y -qq nginx-full passenger-common1.9.1 ruby1.9.1-dev
+
+juju-log 'Enable Phusion Passenger module'
+cat <<EOF > /etc/nginx/conf.d/passenger.conf
+passenger_root /usr/lib/phusion-passenger;
+EOF
+
+juju-log "Open port: [80]"
+open-port 80

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Avoid starting a unconfigured instance that has no database
+if [ -f ~gitlab/gitlab/config/database.yml ]; then
+        juju-log "Starting GitLab"
+        sudo service gitlab start
+        juju-log "Starting nginx"
+        sudo service nginx start
+fi
+exit 0

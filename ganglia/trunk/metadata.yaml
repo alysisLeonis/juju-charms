@@ -1,0 +1,23 @@
+name: ganglia
+summary: Ganglia monitoring server
+description: |
+ Ganglia is a scalable distributed monitoring system for high-performance
+ computing systems such as clusters and Grids.
+ .
+ This charm should be used with the ganglia-node charm to deploy Ganglia
+ for monitoring of other services.
+maintainer: Mark Mims <mark.mims@canonical.com>,
+ James Page <james.page@ubuntu.com>
+requires:
+  master:
+    interface: monitor
+  node:
+    interface: monitor
+# Retained for legacy compatibility
+  ganglia-node:
+    interface: monitor
+provides:
+  head:
+    interface: monitor
+  website:
+    interface: http

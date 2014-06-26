@@ -1,0 +1,32 @@
+This charm sets up a public Mumble server, for use by groups of people
+wanting to do voice communication via the "mumble" client. When used
+with other juju services, it will create a tree of channels designed to
+help coordinate administrative tasks between admins.
+
+Once running, the server, users, groups, ACLs, and additional channels
+can be configured through the client, using the "SuperUser" user and
+password (noted below), using these instructions:
+http://mumble.sourceforge.net/Murmurguide#Becoming_Administrator_and_Registering_a_User
+
+The only configuration required in "local.yaml" is the password of the
+"SuperUser" mumble user (needed above). This must be at least 8 characters
+long, and if this is not configured, the mumble server will not start.
+
+Example local.yaml:
+my-mumble:
+   password: pass
+
+Basic start-up example:
+
+$ juju boostrap
+$ juju deploy --config local.yaml --repository /scratch/ubuntu/vcs/juju-charms local:mumble-server my-mumble
+
+Per-service unit channel tree creation:
+
+$ juju deploy ... other-service
+$ juju add-unit other-service
+$ juju add-relation other-service my-mumble
+
+The above relation will create the "other-service" channel with
+sub-channels "0" and "1" (assuming that's how juju assigns the unit
+numbers).

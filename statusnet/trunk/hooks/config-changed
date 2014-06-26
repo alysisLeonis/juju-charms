@@ -1,0 +1,48 @@
+#!/bin/bash
+
+set -e
+
+# Retrieve the configuration values
+juju-log "Retrieving configuration values"
+TITLE=`config-get title`
+NICKNAME=`config-get nickname`
+PASSWORD=`config-get password`
+EMAIL=`config-get email`
+
+# First check to see if all of the config data has been specified
+if [[ -n $TITLE && -n $NICKNAME && -n $PASSWORD && -n $EMAIL ]] ; then
+    
+    # Now check to see if the application has been installed
+    if [ -f /opt/statusnet_installed ] ; then
+    
+        juju-log "Updating administrator password"
+        /var/www/scripts/setpassword.php $NICKNAME $PASSWORD
+        juju-log "Updating configuration"
+        /var/www/scripts/setconfig.php site name $TITLE
+        
+    else
+        
+        # Check to see if the database settings are available
+        # If so, perform the installation
+        if [ -f /opt/statusnet_db_config ] ; then
+        
+            # Extract the database settings
+            juju-log "Retrieving database configuration"
+            DB_SETTINGS=`cat /opt/statusnet_db_config`
+            set -- $DB_SETTINGS
+            
+            # Perform the installation
+            juju-log "Performing installation"
+            /var/www/scripts/install_cli.php --server="`unit-get public-address`" --sitename "$TITLE" --fancy true --host "$1" --database "$2" --username "$3" --password "$4" --admin-nick "$NICKNAME" --admin-pass "$PASSWORD" --admin-email "$EMAIL"
+            
+            # Signal that the installation has taken place
+            touch /opt/statusnet_installed
+            
+        fi
+    fi
+    
+else
+    
+    juju-log -l WARNING "The nickname, password, and email configuration options must be set before installation can proceed"
+    
+fi

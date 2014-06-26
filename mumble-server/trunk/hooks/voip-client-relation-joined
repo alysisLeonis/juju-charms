@@ -1,0 +1,4 @@
+#!/bin/bash
+set -ex
+
+relation-set port=64738 hostname=$(unit-get private-address)

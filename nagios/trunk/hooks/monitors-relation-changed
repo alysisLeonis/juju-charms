@@ -1,0 +1,129 @@
+#!/usr/bin/python
+# monitors-relation-changed - Process monitors.yaml into remote nagios monitors
+# Copyright Canonical 2012 Canonical Ltd. All Rights Reserved
+# Author: Clint Byrum <clint.byrum@canonical.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import sys
+import os
+import subprocess
+import yaml
+import json
+import re
+import string
+
+
+from common import (customize_service, get_pynag_host,
+        get_pynag_service, refresh_hostgroups,
+        get_valid_relations, get_valid_units,
+        initialize_inprogress_config, flush_inprogress_config)
+
+
+def main(argv):
+    # Note that one can pass in args positionally, 'monitors.yaml targetid
+    # and target-address' so the hook can be tested without being in a hook
+    # context.
+    #
+    if len(argv) > 1:
+        relation_settings = {'monitors': open(argv[1]).read(),
+                             'target-id': argv[2]}
+        if len(argv) > 3:
+            relation_settings['target-address'] = argv[3]
+        all_relations = {'monitors:99': {'testing/0': relation_settings}}
+    else:
+        all_relations = {}
+        for relid in get_valid_relations():
+            (relname, relnum) = relid.split(':')
+            for unit in get_valid_units(relid):
+                relation_settings = json.loads(
+                        subprocess.check_output(['relation-get', '--format=json',
+                            '-r', relid,
+                            '-',unit]).strip())
+
+                if relation_settings is None or relation_settings == '':
+                    continue
+
+                if relname == 'monitors':
+                    if ('monitors' not in relation_settings
+                            or 'target-id' not in relation_settings):
+                        continue
+                    if ('target-id' in relation_settings and 'target-address' not in relation_settings):
+                            relation_settings['target-address'] = relation_settings['private-address']
+
+                else:
+                    # Fake it for the more generic 'nagios' relation'
+                    relation_settings['target-id'] = unit.replace('/','-')
+                    relation_settings['target-address'] = relation_settings['private-address']
+                    relation_settings['monitors'] = {'monitors': {'remote': {} } }
+
+                if relid not in all_relations:
+                    all_relations[relid] = {}
+
+                all_relations[relid][unit] = relation_settings
+
+    # Hack to work around http://pad.lv/1025478
+    targets_with_addresses = set()
+    for relid, units in all_relations.iteritems():
+        for unit, relation_settings in units.items():
+            if 'target-id' in relation_settings:
+                targets_with_addresses.add(relation_settings['target-id'])
+    new_all_relations = {}
+    for relid, units in all_relations.iteritems():
+        for unit, relation_settings in units.items():
+            if relation_settings['target-id'] in targets_with_addresses:
+                if relid not in new_all_relations:
+                    new_all_relations[relid] = {}
+                new_all_relations[relid][unit] = relation_settings
+    all_relations = new_all_relations
+
+    initialize_inprogress_config()
+    for relid, units in all_relations.items():
+        apply_relation_config(relid, units)
+    refresh_hostgroups()
+    flush_inprogress_config()
+    os.system('service nagios3 reload')
+
+def apply_relation_config(relid, units):
+    for unit, relation_settings in units.iteritems():
+        monitors = relation_settings['monitors']
+        target_id = relation_settings['target-id']
+        # If not set, we don't mess with it, as multiple services may feed
+        # monitors in for a particular address. Generally a primary will set this
+        # to its own private-address
+        target_address = relation_settings.get('target-address', None)
+
+        if type(monitors) != dict:
+            monitors = yaml.safe_load(monitors)
+
+        # Output nagios config
+        host = get_pynag_host(target_id)
+
+        if not target_address:
+            raise Exception("No Target Address provied by NRPE service!")
+        host.set_attribute('address', target_address)
+        host.save()
+
+        for mon_family, mons in monitors['monitors']['remote'].iteritems():
+            for mon_name, mon in mons.iteritems():
+                service_name = '%s-%s' % (target_id, mon_name)
+                service = get_pynag_service(target_id, service_name)
+                if customize_service(service, mon_family, mon_name, mon):
+                    service.save()
+                else:
+                    print('Ignoring %s due to unknown family %s' % (mon_name,
+                                                                    mon_family))
+
+if __name__ == '__main__':
+    main(sys.argv)

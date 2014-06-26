@@ -1,0 +1,16 @@
+name: mumble-server
+summary: Low latency VoIP server
+description: |
+  Murmur is the VoIP server component for Mumble. Each murmur process
+  supports multiple virtual servers, each with their own user base and
+  channel list. A tree of channel is automatically created for all juju
+  service units that start a relationship with the mumber-server service.
+maintainer: Kees Cook <kees@ubuntu.com>
+provides:
+  voip-client:
+    interface: mumble
+requires:
+  voip:
+    interface: mumble
+  juju-info:
+    interface: juju-info

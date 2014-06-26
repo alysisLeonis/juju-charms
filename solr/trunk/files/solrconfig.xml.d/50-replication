@@ -1,0 +1,2 @@
+  <requestHandler name="/replication" class="solr.ReplicationHandler">
+    <str name="maxNumberOfBackups">1</str>

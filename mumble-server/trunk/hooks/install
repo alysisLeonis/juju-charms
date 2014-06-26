@@ -1,0 +1,9 @@
+#!/bin/bash
+set -ex
+
+juju-log "Refreshing package database."
+apt-get update
+apt-get dist-upgrade -y
+
+juju-log "Installing required packages (mumble-server)."
+apt-get install -y libicu48 mumble-server python-zeroc-ice

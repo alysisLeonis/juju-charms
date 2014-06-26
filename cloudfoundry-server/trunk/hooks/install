@@ -1,0 +1,129 @@
+#!/bin/bash
+
+############################################################################################################
+# Debugging information
+############################################################################################################
+set -ux
+
+
+############################################################################################################
+# Set the language
+############################################################################################################
+LANG=en_US.UTF-8
+
+
+############################################################################################################
+# Dependency and utility packages
+############################################################################################################
+apt-add-repository ppa:facter-plugins/ppa
+apt-add-repository ppa:charmers/charm-helpers
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get -y install debconf-utils python-software-properties pwgen facter facter-customfacts-plugin curl charm-helper-sh
+
+############################################################################################################
+# Source the charm helpers sh functions
+############################################################################################################
+source /usr/share/charm-helper/sh/net.sh
+
+
+############################################################################################################
+# Global variables
+############################################################################################################
+# MySQL
+MYSQL_ROOT_PASSWORD=`config-get mysql_root_password`
+if [ "${MYSQL_ROOT_PASSWORD}" == "auto" ]; then
+	MYSQL_ROOT_PASSWORD=`pwgen -N1`
+fi
+
+MYSQL_TOKEN=`config-get mysql_token`
+if [ "${MYSQL_TOKEN}" == "auto" ]; then
+	MYSQL_TOKEN=`pwgen -N1`
+fi
+
+# DynDNS
+USE_DYNDNS=`config-get use_dyndns`
+if [ "${USE_DYNDNS}" == "True" ]; then
+	USE_DYNDNS="true"
+fi
+DYNDNS_USERNAME=`config-get dyndns_username`
+DYNDNS_PASSWORD=`config-get dyndns_password`
+DYNDNS_HOSTNAME=`config-get dyndns_hostname`
+
+# CloudFoundry Server
+CF_SERVER_IP=`facter ipaddress`
+CF_SERVER_PUBLIC_HOSTNAME=`unit-get public-address`
+CF_SERVER_PUBLIC_IP=`ch_get_ip ${CF_SERVER_PUBLIC_HOSTNAME}`
+NATS_USERNAME=`config-get nats_username`
+NATS_PASSWORD=`config-get nats_password`
+if [ "${NATS_PASSWORD}" == "auto" ]; then
+	NATS_PASSWORD=`pwgen -N1`
+fi
+NATS_DEFAULT_PORT=`config-get nats_default_port`
+
+
+############################################################################################################
+# Add repositories
+############################################################################################################
+apt-add-repository ppa:cloudfoundry/ppa
+apt-get -y update
+
+
+############################################################################################################
+# Preseed variables
+############################################################################################################
+
+# Mysql
+echo debconf mysql-server/root_password password ${MYSQL_ROOT_PASSWORD}| /usr/bin/debconf-set-selections
+echo debconf mysql-server/root_password_again password ${MYSQL_ROOT_PASSWORD}| /usr/bin/debconf-set-selections
+
+# Postfix
+echo debconf postfix/main_mailer_type select No configuration | /usr/bin/debconf-set-selections
+
+# DynDNS
+if [ "${USE_DYNDNS}" == "true" ];then
+   response=$(curl -s http://"${DYNDNS_USERNAME}":"${DYNDNS_PASSWORD}"@members.dyndns.org/nic/update?hostname="${DYNDNS_HOSTNAME}"&myip=$CF_PUBLIC_IP&wildcard=NOCHG&mx=NOCHG&backmx=NOCHG)
+fi
+
+# CloudFoundry
+echo debconf cloudfoundry-server/use_dyndns boolean ${USE_DYNDNS} | /usr/bin/debconf-set-selections
+echo debconf cloudfoundry-server/hostname string api.${DYNDNS_HOSTNAME} | /usr/bin/debconf-set-selections
+echo debconf cloudfoundry-server-dea/ip string ${CF_SERVER_IP} | /usr/bin/debconf-set-selections
+echo debconf cloudfoundry-server/ip string ${CF_SERVER_IP} | /usr/bin/debconf-set-selections
+
+
+############################################################################################################
+# Install CloudFoundry package
+############################################################################################################
+DEBIAN_FRONTEND=noninteractive apt-get -y install cloudfoundry-server
+
+
+############################################################################################################
+# Configure mysql password for cloudfoundry-server
+############################################################################################################
+sed -i -e "s/  pass:.*/  pass: ${MYSQL_ROOT_PASSWORD}/" /opt/cloudfoundry-server/vcap/services/mysql/config/mysql_node.yml
+
+
+############################################################################################################
+# Configure all of the gateway services to point to the correct cloud_controller_uri
+############################################################################################################
+cd /opt/cloudfoundry-server/vcap/services
+find -type f | grep yml | xargs sed -i -e "s/.*cloud_controller_uri.*/cloud_controller_uri: api.${DYNDNS_HOSTNAME}/"
+
+
+############################################################################################################
+# Stop CloudFoundry ( due to LP:810808 )
+############################################################################################################
+service cloudfoundry-server stop
+cd /opt/cloudfoundry-server/vcap && HOME=/root rake db:migrate && cd -
+
+
+############################################################################################################
+# Open the necessary firewall/ACL ports
+############################################################################################################
+if [ -x /usr/bin/open-port ]; then
+   open-port 80/TCP
+   open-port 443/TCP
+   open-port ${NATS_DEFAULT_PORT}/TCP
+fi
+
+exit 0

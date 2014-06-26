@@ -1,0 +1,9 @@
+#!/bin/bash
+
+set -ux
+
+INSTALL_DIR='/opt/cloudfoundry-server/vcap'
+PATH=$PATH:/var/lib/gems/1.9.1/bin
+
+service cloudfoundry-server stop
+cd $INSTALL_DIR && bin/vcap start redis

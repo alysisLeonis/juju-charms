@@ -1,0 +1,19 @@
+options:
+  admin_password:
+    type: string
+    description: Sets the admin password
+
+  host:
+    type: string
+    description: The FQDN for your GitLab unit
+    default: localhost
+
+  email_from:
+    type: string
+    description: Email address used in the from field in mails send by GitLab
+    default: gitlab@localhost
+
+  support_email:
+    type: string
+    description:  Email address of your support contact
+    default: support@localhost 

@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -eux
+
+TOPDIR="/opt/seafile"
+INSTALLPATH="${TOPDIR}/seafile-server-latest"
+SEAFILE_SCRIPT="${INSTALLPATH}/seafile.sh"
+SEAHUB_SCRIPT="${INSTALLPATH}/seahub.sh"
+SEAHUB_PORT=`config-get seahub_port`
+
+${SEAFILE_SCRIPT} start
+${SEAHUB_SCRIPT} start ${SEAHUB_PORT}
+touch .started

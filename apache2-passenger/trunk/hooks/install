@@ -1,0 +1,20 @@
+#!/bin/bash
+
+set -eu
+source "$(dirname $0)/common.sh"
+
+juju-log 'Install dependencies'
+apt-get install -y -qq build-essential python-software-properties libcurl4-openssl-dev libssl-dev zlib1g-dev
+
+juju-log 'Add Brightbox ppa'
+apt-add-repository -y ppa:brightbox/ruby-ng
+apt-get -qq update
+
+juju-log 'Install Apache2, Ruby and libapache2-mod-passenger'
+apt-get install -y -qq apache2-mpm-prefork apache2-prefork-dev libapr1-dev libaprutil1-dev passenger-common1.9.1 ruby1.9.1-dev libapache2-mod-passenger
+
+juju-log 'Enable Phusion Passenger module'
+a2enmod passenger
+
+juju-log "Open port: [80]"
+open-port 80

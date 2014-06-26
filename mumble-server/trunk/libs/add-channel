@@ -1,0 +1,39 @@
+#!/usr/bin/python
+# Copyright 2012, Kees Cook <kees@ubuntu.com>
+# License: GPLv3
+import sys
+import mice
+import micejuju
+
+name = sys.argv[1]
+
+# Short-circuit: does this channel already exist?
+channel = micejuju.getChanIndexByName(mice.s, name)
+
+# Add channel if missing.
+if channel == None:
+    # Check and build components of channel path
+    names = name.split('/')
+    built = []
+    parent = 0
+    while len(names):
+        name = names.pop(0)
+        built.append(name)
+        full = "/".join(built)
+        index = micejuju.getChanIndexByName(mice.s, full)
+        if index != None:
+            parent = index
+            print 'found existing %s %d' % (full, parent)
+            continue
+
+        # Add the rest of the names to heirarchy.
+        print 'adding at %s' % (full)
+        parent = mice.s.addChannel(name, parent)
+        while len(names):
+            parent = mice.s.addChannel(names.pop(0), parent)
+        channel = parent
+
+# Set the description.
+state = mice.s.getChannelState(channel)
+state.description = sys.argv[2]
+mice.s.setChannelState(state)

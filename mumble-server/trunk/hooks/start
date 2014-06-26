@@ -1,0 +1,9 @@
+#!/bin/bash
+set -ex
+
+juju-log "Starting mumble server."
+service mumble-server start
+
+juju-log "Opening service ports (64738)."
+open-port 64738/udp
+open-port 64738/tcp

@@ -1,0 +1,8 @@
+#!/bin/bash
+set -ex
+
+unit=$(echo "$JUJU_REMOTE_UNIT")
+hostname=$(relation-get private-address)
+
+juju-log "Adding channel for $unit ($hostname)"
+libs/add-channel "$unit" "$hostname"

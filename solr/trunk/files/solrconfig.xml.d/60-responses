@@ -1,0 +1,7 @@
+  <queryResponseWriter name="json" class="solr.JSONResponseWriter">
+    <str name="content-type">text/plain; charset=UTF-8</str>
+  </queryResponseWriter>
+  <queryResponseWriter name="velocity" class="solr.VelocityResponseWriter" enable="true"/>
+  <queryResponseWriter name="xslt" class="solr.XSLTResponseWriter">
+    <int name="xsltCacheLifetimeSeconds">5</int>
+  </queryResponseWriter>

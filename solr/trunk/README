@@ -1,0 +1,253 @@
+Overview
+--------
+
+Enterprise search server based on Lucene.
+
+Solr is an open source enterprise search server based on the Lucene
+Java search library, with XML/HTTP and JSON APIs, hit highlighting,
+faceted search, caching, replication, and a web administration interface.
+
+http://lucene.apache.org/solr/
+ 
+Usage
+-----
+
+General
+
+A Solr deployment consists of a Solr service:
+
+  juju deploy --repository . local:solr solr
+
+Once deployed, you can access its admin interface over a ssh tunnel:
+
+  ssh -L 8080:localhost:8080 <public address>
+  Open web browser at http://localhost:8080/solr/admin/
+
+(NOTE: For LXC based deployments, a ssh tunnel isn't required and you can simply
+access 'http://<private address>:8080/solr/admin/')
+
+A Solr instance isn't security hardened enough to safely expose to the
+Internet, even with password protection (see below).  Use on an internal
+network only.  Should you need to expose an instance for development purposes,
+you can still issue:
+
+  juju expose solr
+
+This will expose solr on port 8080.
+
+The Solr server is protected by HTTP digest password protection which isn't
+enabled by default, to enable set one or many passwords related to the admin,
+update and search roles:
+
+  juju set solr "admin-password=<password>"
+  juju set solr "update-password=<password>"
+  juju set solr "search-password=<password>"
+
+(NOTE: You could also do this at deployment with the '--config' switch)
+
+Each role has its own password and set of abilities.  The abilities are
+hierarchical such that the update role includes the abilities of the search
+role and the admin role includes all abilities.  The roles would typically be
+used as:
+
+  (Username)
+  solr-admin  - all access
+  solr-update - POST'ing new documents to index
+  solr-search - search querying only
+
+Setting an empty password disables protection for that role.
+
+You can search a Solr instance with the following example queries:
+
+  # show all documents
+  http://.../solr/select?q=*:*
+
+  # output in json
+  http://.../solr/select?q=*:*&wt=json
+
+The XML schema can be set as follows:
+
+  juju set solr "schema=$(base64 < <schema>)"
+
+Uploading documents can be done from the commandline using curl (installed on
+unit), see 'http://wiki.apache.org/solr/' for details.
+
+
+Indexing from Database
+
+You can automatically index the content of a RDBMS such as MySQL or PostgreSQL
+using Solr's Data Import Handler (DIH).  Database configuration is controlled
+using the 'db-config' option.  This is a comma separated list of core, database
+service and database colon separated values:
+
+  <core>:<service>:<database>,<core>:<service>:<database>
+
+if '<core>' is omitted then 'core0' (initial core) is assumed.
+
+(Note: You can use multiple databases from the same MySQL service.  When a
+database isn't defined for a MySQL service, the database 'solr' is used.
+PostgreSQL doesn't support multiple databases from the same service, so database
+is ignored.)
+
+For example:
+
+  # core0 uses mysql database solr1
+  # core1 uses mysql database solr2
+  juju set solr "db-config=core0:mysql:solr1,core1:mysql:solr2"
+
+  # core0 uses postgresql
+  # core1 uses mysql2 database solr
+  juju set solr "db-config=core0:postgresql,core1:mysql2:solr"
+
+Having deployed the appropriate charm, add the relation:
+
+  # mysql
+  juju add-relation solr:db-mysql mysql:db
+
+  # postgresql
+  juju add-relation solr:db-pgsql postgresql:db
+
+  # upload data-config document
+  juju set solr "dih-config=$(base64 < <data-config>)"
+
+  # core1 data-config document
+  juju set solr "core1-dih-config=$(base64 < <data-config>)"
+
+Then use the DIH web interface to perform the importing:
+
+  # full import
+  http://.../solr/dataimport?command=full-import
+
+  # delta import
+  http://.../solr/dataimport?command=delta-import
+
+  # status
+  http://.../solr/dataimport?command=status
+
+See 'http://wiki.apache.org/solr/DataImportHandler' for more details.
+
+
+JMX
+
+JMX monitoring is disabled by default, but you can enable it with the
+following commands:
+
+  juju set solr jmx-enabled=True
+  juju set solr jmx-control-password=<password>
+  juju set solr jmx-monitor-password=<password>
+
+The control role (username - 'controlRole') allows read/write access, the
+monitor role (username - 'monitorRole') read only access.  If a password is
+empty, it disables access for that role.
+
+There is a final JMX option, 'jmx-localhost'.  This determines what hostname is
+given to the JMX client to connect to.  If false, the internal hostname or IP
+address of the unit will be used, meaning connection is suited to either LXC
+based deployments or cloud deployments where you have VPN access:
+
+  JConsole or VisualVM connect to <private unit address>:10001 with
+  username/password
+
+For cloud deployments, setting this to true uses 'localhost' hostname, which
+allows you to connect over a ssh tunnel:
+
+  ssh -L 10001:localhost:10001 -L 10002:localhost:10002 <public unit address>
+  JConsole or VisualVM connect to localhost:10001 with username/password
+
+The latter is much more typical of out of the box deployment, so 'jmx-localhost'
+defaults to True.
+
+
+Multiple Cores
+
+A Solr service by default has a single index ('core').  However with this charm,
+you can enable up to 4 extra indexes, each of which may be queried, updated,
+etc. individually.  Such an arrangement is typical for large
+applications which require querying multiple sets of data.
+
+To enable an extra core:
+
+  # enable core
+  juju set solr core<n>-enabled=True
+
+  # set core schema
+  juju set solr "core<n>-schema=$(base64 < <schema>)"
+
+where '<n>' is the core number, currently 1-4.
+
+URLs have a '/core<n>/' component to determine the core being accessed.  For
+example 'http://.../solr/core1/select?q=*:*'.  Excluding the core
+component defaults to the first index (or 'core0').
+
+
+Replication
+
+Solr supports the ability to replicate an index from a master unit to one or
+more slave units:
+
+  # deploy second service
+  juju deploy --repository . local:solr solr-slave
+
+  # add master/slave relationship
+  juju add-relation solr:master solr-slave:slave
+
+  # add further slave(s)
+  juju add-unit solr-slave
+
+Each slave will poll and replicate the master's index and schema.  Slaves should
+be treated as search only.  Updates should be applied to the master only.  All
+enabled cores will be replicated.
+
+Replication allows you to spread the querying load across multiple slave
+servers.  A slave can also be used to take a backup of the index:
+
+  http://.../solr/[core<n>/]replication?command=backup
+
+A concurrency safe snapshot of the index will be created under
+'/var/lib/solr/core<n>'.  (You can use this backup URL on a non-replicated unit
+too).
+
+Masters and slaves relations can be combined freely, so you can set a unit to be
+both a master and slave, called a 'Solr Repeater', acting as a local proxy for
+the master.
+
+See 'http://wiki.apache.org/solr/SolrReplication' for more details.
+
+
+Distributed Search
+
+Solr supports the ability to divide an index across multiple units.  Each unit
+holds and queries its own complete index which requires you to provide your own
+mechanism for distributing (ideally randomly) documents to each unit.  To create
+such a deployment:
+
+  # add 2 more units for a 3 unit index
+  juju add-unit -n 2 solr
+
+Then query across 3 machines:
+
+  # show all documents
+  http://<any unit address>:8080/solr/select?shards=<unit 1 address>:8080/solr[/core<n>],<unit 2 address>:8080/solr[/core<n>],<unit 3 address>:8080/solr[/core<n>]&q=*:*
+
+(NOTE: The unit addresses need to be contactable from the initial unit you
+query.  So if you are using a ssh tunnel, these addresses will be the private
+LAN addresses instead of localhost.)
+
+If you need to update the index schema, updating this via juju (see above) will
+apply the schema across all units providing they are deployed under a single
+service.
+
+(NOTE: Distributed search doesn't use a shared Inverse Document Frequency (IDF),
+so irregularities in the scoring will occur compared to a combined index on a
+single machine.  It's therefore important that you distribute documents randomly
+across units.)
+
+See 'http://wiki.apache.org/solr/DistributedSearch' for more details.
+
+
+Distributed Search + Replication
+
+Distributed search features can be combined with replication to do a so called
+'deep scale' deployment.  Using the notes above, you can create multiple
+replication clusters each of which forms a node of a distributed search.  This
+is a somewhat exotic deployment so is left to the user to explore!

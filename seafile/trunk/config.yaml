@@ -1,0 +1,33 @@
+options:
+  domain:
+    default: ""
+    type: string
+    description: Domain or public IP address where Seahub will be hosted
+  server_name:
+    default: ""
+    type: string
+    description: This server name will be seen by your seafile users. The name should be between 3 and 15 characters long.
+  seahub_admin_email:
+    default: ""
+    type: string
+    description: Admin email address
+  seahub_admin_passwd:
+    type: string
+    default: ""
+    description: Admin password. One will be generated if not provided.
+  ccnet_server_port:
+    default: 10001
+    type: int
+    description: Port to use for the ccnet server
+  seafile_server_port:
+    default: 12001
+    type: int
+    description: Port to use for the seafile server
+  http_server_port:
+    default: 8001
+    type: int
+    description: Port to use for the seafile http server
+  seahub_port:
+    type: int
+    default: 80
+    description: Port where the Seahub will be hosted

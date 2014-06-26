@@ -1,0 +1,9 @@
+#!/bin/bash
+
+set -ux
+
+SERVICE_NAME="cloudfoundry-server"
+
+service ${SERVICE_NAME} status && service ${SERVICE_NAME} restart || service ${SERVICE_NAME} start
+
+exit 0

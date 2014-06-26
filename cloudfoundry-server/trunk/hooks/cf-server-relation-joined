@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -ux
+
+CF_SERVER_IP=`facter ipaddress`
+CF_SERVER_HOST=`unit-get private-address`
+CF_NATS_USERNAME=`config-get nats_username`
+CF_NATS_PASSWORD=`config-get nats_password`
+CF_NATS_DEFAULT_PORT=`config-get nats_default_port`
+
+relation-set cf-server-ip=${CF_SERVER_IP} cf-server-host=${CF_SERVER_HOST} cf-nats-username=${CF_NATS_USERNAME} cf-nats-password=${CF_NATS_PASSWORD} cf-nats-default-port=${CF_NATS_DEFAULT_PORT}

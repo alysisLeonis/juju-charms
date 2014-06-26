@@ -1,0 +1,345 @@
+#!/bin/bash
+
+set -eux
+
+TOPDIR="/opt/seafile"
+INSTALLPATH="${TOPDIR}/seafile-server-latest"
+default_ccnet_conf_dir=${TOPDIR}/ccnet
+default_seafile_data_dir=${TOPDIR}/seafile-data
+default_seahub_db=${TOPDIR}/seahub.db
+PYTHON=`which python`
+
+export SEAFILE_LD_LIBRARY_PATH=${INSTALLPATH}/seafile/lib/:${INSTALLPATH}/seafile/lib64:${LD_LIBRARY_PATH}
+
+use_existing_ccnet="false"
+use_existing_seafile="false"
+
+
+function err_and_quit () {
+    juju-log "Error occured during setup.  Please fix possible problems and run the script again"
+    exit 1;
+}
+
+function on_ctrl_c_pressed () {
+    juju-log "Setup is interrupted."
+    exit 1;
+}
+
+# clean newly created ccnet/seafile configs when exit on SIGINT
+trap on_ctrl_c_pressed 2
+
+function check_sanity () {
+    if ! [[ -d ${INSTALLPATH}/seahub && -d ${INSTALLPATH}/seafile \
+        && -d ${INSTALLPATH}/runtime ]]; then
+        juju-log "The seafile-server diretory doesn't contain all needed files."
+        juju-log "Please make sure you have extracted all files and folders from tarball."
+        err_and_quit;
+    fi
+}
+
+
+function get_server_name () {
+    server_name=`config-get server_name`
+    if [[ "${server_name}" == "" ]]; then
+        juju-log "server name can not be empty"
+        err_and_quit;
+    elif [[ ! ${server_name} =~ ^[a-zA-Z0-9_-]{3,14}$ ]]; then
+        juju-log "${server_name} is not a valid name."
+        err_and_quit;
+    fi
+}
+
+function get_server_ip_or_domain () {
+    ip_or_domain=`config-get domain`
+    if [[ "${ip_or_domain}" == "" ]]; then
+        juju-log "ip or domain can not be empty"
+        err_and_quit;
+    fi
+}
+
+function get_ccnet_server_port () {
+    server_port=`config-get ccnet_server_port`
+    if [[ ! ${server_port} =~ ^[0-9]+$ ]]; then
+        juju-log "\"${server_port}\" is not a valid port number. "
+        err_and_quit;
+    fi
+}
+
+function get_seafile_server_port () {
+    seafile_server_port=`config-get seafile_server_port`
+    if [[ ! ${seafile_server_port} =~ ^[0-9]+$ ]]; then
+        juju-log "\"${seafile_server_port}\" is not a valid port number. "
+        err_and_quit;
+    fi
+}
+
+function get_httpserver_port () {
+    httpserver_port=`config-get http_server_port`
+    if [[ ! ${httpserver_port} =~ ^[0-9]+$ ]]; then
+        juju-log "\"${httpserver_port}\" is not a valid port number. "
+        err_and_quit;
+    fi
+}
+
+function get_seahub_port () {
+    seahub_port=`config-get seahub_port`
+    if [[ ! ${seahub_port} =~ ^[0-9]+$ ]]; then
+        juju-log "\"${seahub_port}\" is not a valid port number. "
+        err_and_quit;
+    fi
+}
+
+# -------------------------------------------
+# Main workflow of this script 
+# -------------------------------------------
+
+check_sanity;
+
+if [[ ${use_existing_ccnet} != "true" ]]; then
+    get_server_name;
+    get_server_ip_or_domain;
+    get_ccnet_server_port;
+    get_seahub_port;
+fi
+
+if [[ ${use_existing_seafile} != "true" ]]; then
+    get_seafile_server_port
+    get_httpserver_port
+fi
+
+seafile_data_dir="/mnt/seafile-data"
+
+sleep .5
+
+juju-log "This is your config information:"
+
+if [[ ${use_existing_ccnet} != "true" ]]; then
+    juju-log "server name:        ${server_name}"
+    juju-log "server ip/domain:   ${ip_or_domain}"
+    juju-log "server port:        ${server_port}"
+else
+    juju-log "ccnet config:       use existing config in  ${default_ccnet_conf_dir}"
+fi
+
+if [[ ${use_existing_seafile} != "true" ]]; then
+    juju-log "seafile data dir:   ${seafile_data_dir}"
+    juju-log "seafile port:       ${seafile_server_port}"
+    juju-log "httpserver port:    ${httpserver_port}"
+else
+    juju-log "seafile data dir:   use existing data in    ${seafile_data_dir}"
+fi
+
+if [ -f .started ]; then
+    hooks/stop
+    rm .started
+    touch .stopped
+fi
+
+ccnet_init=${INSTALLPATH}/seafile/bin/ccnet-init
+seaf_server_init=${INSTALLPATH}/seafile/bin/seaf-server-init
+current_seahub_port=`cat .seahubport`
+
+# -------------------------------------------
+# Create ccnet conf 
+# -------------------------------------------
+if [[ "${use_existing_ccnet}" != "true" ]]; then
+    juju-log "Generating ccnet configuration in ${default_ccnet_conf_dir}..."
+    rm -fr "${default_ccnet_conf_dir}"
+    if ! LD_LIBRARY_PATH=$SEAFILE_LD_LIBRARY_PATH "${ccnet_init}" -c "${default_ccnet_conf_dir}" --name "${server_name}" --port "${server_port}" --host "${ip_or_domain}"; then
+        err_and_quit;
+    fi
+    if [ -f .newinstall ]; then
+        sed -i "s/8000/${seahub_port}/" ${default_ccnet_conf_dir}/ccnet.conf
+        rm .newinstall
+    elif [ ! -f .newinstall ] && [[ "${seahub_port}" != ${current_seahub_port} ]]; then
+        sed -i "s/${current_seahub_port}/${seahub_port}/" ${default_ccnet_conf_dir}/ccnet.conf
+    fi
+fi
+
+sleep 0.5
+
+# -------------------------------------------
+# Create seafile conf
+# -------------------------------------------
+if [[ "${use_existing_seafile}" != "true" ]]; then
+    juju-log "Generating seafile configuration in ${seafile_data_dir} ..."
+    if ! LD_LIBRARY_PATH=$SEAFILE_LD_LIBRARY_PATH ${seaf_server_init} --seafile-dir "${seafile_data_dir}" \
+        --port ${seafile_server_port} --httpserver-port ${httpserver_port}; then
+        juju-log "Failed to generate seafile configuration"
+        err_and_quit;
+    fi
+fi
+
+# -------------------------------------------
+# Write seafile.ini
+# -------------------------------------------
+
+echo "${seafile_data_dir}" > "${default_ccnet_conf_dir}/seafile.ini"
+
+# -------------------------------------------
+# generate seahub/settings.py
+# -------------------------------------------
+dest_settings_py=${TOPDIR}/seahub_settings.py
+seahub_secret_keygen=${INSTALLPATH}/seahub/tools/secret_key_generator.py
+chmod +x "$seahub_secret_keygen"
+
+if [[ ! -f ${dest_settings_py} ]]; then
+    key=$( "${seahub_secret_keygen}")
+    echo -n "SECRET_KEY = " >> "${dest_settings_py}"
+    echo "\"${key}\"" >> "${dest_settings_py}"
+fi
+
+# -------------------------------------------
+# Seahub related config
+# -------------------------------------------
+
+function get_seahub_admin_email () {
+    seahub_admin_email=`config-get seahub_admin_email`
+    if [[ "${seahub_admin_email}" == "" ]]; then
+        juju-log "Seahub admin user name can't be empty."
+        err_and_quit;
+    elif [[ ! ${seahub_admin_email} =~ ^.+@.*\..+$ ]]; then
+        juju-log "${seahub_admin_email} is not a valid email address"
+        err_and_quit;
+    fi
+}
+
+function get_seahub_admin_passwd () {
+    seahub_admin_passwd=`config-get seahub_admin_passwd`
+    [ -z ${seahub_admin_passwd} ] && seahub_admin_passwd=`pwgen -N1`
+}
+
+get_seahub_admin_email;
+sleep .5;
+get_seahub_admin_passwd;
+seahub_admin_passwd_enc=$(echo -n ${seahub_admin_passwd} | sha1sum | grep -o "[0-9a-f]*")
+sleep .5;
+
+juju-log "This is your seahub admin username/password"
+juju-log "admin user name:        ${seahub_admin_email}"
+juju-log "admin password:         ${seahub_admin_passwd}"
+
+usermgr_db_dir=${default_ccnet_conf_dir}/PeerMgr/
+usermgr_db=${usermgr_db_dir}/usermgr.db
+
+if [[ "${use_existing_ccnet}" != "true" ]]; then
+    # create admin user/passwd entry in ccnet db
+    if ! mkdir -p "${usermgr_db_dir}"; then
+        juju-log "Failed to create seahub admin."
+        err_and_quit;
+    fi
+
+    sql="CREATE TABLE IF NOT EXISTS EmailUser (id INTEGER NOT NULL PRIMARY KEY, email TEXT, passwd TEXT, is_staff bool NOT NULL, is_active bool NOT NULL, ctime INTEGER)";
+
+    if ! sqlite3 "${usermgr_db}" "${sql}" ; then
+        rm -f "${usermgr_db}"
+        juju-log "Failed to create seahub admin."
+        err_and_quit;
+    fi
+
+    sql="INSERT INTO EmailUser(email, passwd, is_staff, is_active, ctime) VALUES (\"${seahub_admin_email}\", \"${seahub_admin_passwd_enc}\", 1, 1, 0);"
+
+    if ! sqlite3 "${usermgr_db}" "${sql}" ; then
+        rm -f "${usermgr_db}"
+        juju-log "Failed to create seahub admin."
+        err_and_quit;
+    fi
+fi
+
+juju-log "Now sync seahub database ... "
+
+export CCNET_CONF_DIR=$default_ccnet_conf_dir
+export SEAFILE_CONF_DIR=$seafile_data_dir
+
+export PYTHONPATH=${INSTALLPATH}/seafile/lib/python2.6/site-packages:${INSTALLPATH}/seafile/lib64/python2.6/site-packages:${INSTALLPATH}/seahub/thirdpart:$PYTHONPATH
+export PYTHONPATH=${INSTALLPATH}/seafile/lib/python2.7/site-packages:${INSTALLPATH}/seafile/lib64/python2.7/site-packages:$PYTHONPATH
+
+manage_py=${INSTALLPATH}/seahub/manage.py
+pushd "${INSTALLPATH}/seahub" 2>/dev/null 1>&2
+if ! python manage.py syncdb; then
+    popd 2>/dev/null 1>&2
+    juju-log "Failed to sync seahub database."
+    err_and_quit;
+fi
+popd 2>/dev/null 1>&2
+juju-log "Done."
+
+# prepare avatar folder
+
+media_dir=${INSTALLPATH}/seahub/media
+orig_avatar_dir=${INSTALLPATH}/seahub/media/avatars
+dest_avatar_dir=${TOPDIR}/seahub-data/avatars
+
+if [[ ! -d ${dest_avatar_dir} ]]; then
+    mkdir -p "${TOPDIR}/seahub-data"
+    mv "${orig_avatar_dir}" "${dest_avatar_dir}"
+    ln -s ../../../seahub-data/avatars ${media_dir}
+fi
+
+# -------------------------------------------
+# final message
+# -------------------------------------------
+
+sleep 1
+
+juju-log "-----------------------------------------------------------------"
+juju-log "Your seafile server configuration has been finished successfully." 
+juju-log "-----------------------------------------------------------------"
+juju-log "run seafile server:     ./seafile.sh { start | stop | restart }"
+juju-log "run seahub  server:     ./seahub.sh  { start <port> | stop | restart <port> }"
+juju-log "-----------------------------------------------------------------"
+juju-log "If you are behind a firewall, remember to allow input/output of these tcp ports:"
+juju-log "-----------------------------------------------------------------"
+juju-log "port of ccnet server:         ${server_port}"
+juju-log "port of seafile server:       ${seafile_server_port}"
+juju-log "port of seafile httpserver:    ${httpserver_port}"
+juju-log "port of seahub:               ${seahub_port}"
+juju-log "When problems occur, Refer to\n"
+juju-log "      ${server_manual_http}\n"
+juju-log "for information."
+
+currentserver_port=`cat .serverport`
+currentseafile_server_port=`cat .seafileserverport`
+currenthttpserver_port=`cat .httpserverport`
+
+if [[ "${current_seahub_port}" == '' ]]; then
+    open-port ${seahub_port}/TCP
+    echo "${seahub_port}" > .seahubport
+elif [[ "${current_seahub_port}" != "${seahub_port}" ]]; then
+    close-port ${current_seahub_port}/TCP
+    open-port ${seahub_port}/TCP
+    echo "${seahub_port}" > .seahubport
+fi
+
+if [[ "${currentserver_port}" == '' ]]; then
+    open-port ${server_port}/TCP
+    echo "${server_port}" > .serverport
+elif [[ ${currentserver_port} != "${server_port}" ]]; then
+    close-port ${currentserver_port}/TCP
+    open-port ${server_port}/TCP
+    echo "${server_port}" > .serverport
+fi
+
+if [[ "${currentseafile_server_port}" == '' ]]; then
+    open-port ${seafile_server_port}/TCP
+    echo "${seafile_server_port}" > .seafileserverport
+elif [[ "${currentseafile_server_port}" != "${seafile_server_port}" ]]; then
+    close-port ${currentseafile_server_port}/TCP
+    open-port ${seafile_server_port}/TCP
+    echo "${seafile_server_port}" > .seafileserverport
+fi
+
+if [[ "${currenthttpserver_port}" == '' ]]; then
+    open-port ${httpserver_port}/TCP
+    echo "${httpserver_port}" > .httpserverport
+elif [[ "${currenthttpserver_port}" != "${httpserver_port}" ]]; then
+    close-port ${currenthttpserver_port}/TCP
+    open-port ${httpserver_port}/TCP
+    echo "${httpserver_port}" > .httpserverport
+fi
+
+if [ -f .stopped ]; then
+    hooks/start
+    rm .stopped
+    touch .started
+fi

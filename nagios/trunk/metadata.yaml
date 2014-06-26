@@ -1,0 +1,19 @@
+name: nagios
+summary: Nagios monitoring service.
+maintainer: Charmers <juju@lists.ubuntu.com>
+description: |
+  Nagios is a monitoring and management system for hosts, services, and
+  networks.
+categories: ["monitoring"]
+provides:
+  website:
+    interface: http
+  mymonitors:
+    interface: monitors
+requires:
+  legacy:
+    interface: monitoring
+  nagios:
+    interface: juju-info
+  monitors:
+    interface: monitors

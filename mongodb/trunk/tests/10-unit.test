@@ -1,0 +1,12 @@
+#!/usr/bin/python
+
+"""Unit test suite."""
+
+import os
+import sys
+import unittest
+
+runner = unittest.TextTestRunner(verbosity=2)
+suite = unittest.TestLoader().discover(os.path.dirname(__file__))
+result = runner.run(suite)
+sys.exit(not result.wasSuccessful())

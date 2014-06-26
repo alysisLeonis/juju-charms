@@ -1,0 +1,139 @@
+options:
+  # Solr configuration
+  lucene-version:
+    type: string
+    default: LUCENE_36
+    description: |
+      Lucene index version to use.
+  schema:
+    type: string
+    description: |
+      Solr XML schema (base64 encoded).
+  dih-config:
+    type: string
+    description: |
+      Data Import Handler XML configuration (base64 encoded).
+      .
+      "Note: 'dataSource' element will be ignored."
+  db-config:
+    type: string
+    description: |
+      Database relation configuration.
+  # Solr passwords
+  admin-password:
+    type: string
+    description: |
+      "Solr admin ('solr-admin') password."
+  update-password:
+    type: string
+    description: |
+      "Solr update ('solr-update') password."
+  search-password:
+    type: string
+    description: |
+      "Solr search ('solr-search') password."
+  # Distribution
+  dist-url:
+    type: string
+    default: http://mirror.catn.com/pub/apache/lucene/solr/3.6.0/apache-solr-3.6.0.tgz
+    description: |
+      Distribution URL.
+  dist-md5:
+    type: string
+    default: ac11ef4408bb015aa3a5eefcb1047aec
+    description: |
+      MD5 distribution hash.
+  # Java options
+  java-opts:
+    type: string
+    default: -Xmx1024M
+    description: |
+      Java options for Solr/Tomcat JVM.
+  # JMX
+  jmx-enabled:
+    type: boolean
+    default: False
+    description: |
+      Enable Solr/Tomcat JMX monitoring.
+  jmx-localhost:
+    type: boolean
+    default: True
+    description: |
+      Use localhost over LAN hostname in connections.  Useful for SSH tunnels.
+  jmx-control-password:
+    type: string
+    description: |
+      JMX control password.
+  jmx-monitor-password:
+    type: string
+    description: |
+      JMX monitor password.
+
+  # Multiple cores
+  # Core 1
+  core1-enabled:
+    type: boolean
+    default: False
+    description: |
+      "Enable core 1."
+  core1-schema:
+    type: string
+    description: |
+      Solr XML schema (base64 encoded).
+  core1-dih-config:
+    type: string
+    description: |
+      Data Import Handler XML configuration (base64 encoded).
+      .
+      "Note: 'dataSource' element will be ignored."
+
+  # Core 2
+  core2-enabled:
+    type: boolean
+    default: False
+    description: |
+      "Enable core 2."
+  core2-schema:
+    type: string
+    description: |
+      Solr XML schema (base64 encoded).
+  core2-dih-config:
+    type: string
+    description: |
+      Data Import Handler XML configuration (base64 encoded).
+      .
+      "Note: 'dataSource' element will be ignored."
+
+  # Core 3
+  core3-enabled:
+    type: boolean
+    default: False
+    description: |
+      "Enable core 3."
+  core3-schema:
+    type: string
+    description: |
+      Solr XML schema (base64 encoded).
+  core3-dih-config:
+    type: string
+    description: |
+      Data Import Handler XML configuration (base64 encoded).
+      .
+      "Note: 'dataSource' element will be ignored."
+
+  # Core 4
+  core4-enabled:
+    type: boolean
+    default: False
+    description: |
+      "Enable core 4."
+  core4-schema:
+    type: string
+    description: |
+      Solr XML schema (base64 encoded).
+  core4-dih-config:
+    type: string
+    description: |
+      Data Import Handler XML configuration (base64 encoded).
+      .
+      "Note: 'dataSource' element will be ignored."

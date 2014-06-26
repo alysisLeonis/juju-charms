@@ -1,0 +1,20 @@
+#!/bin/bash
+
+set -eu
+source "$(dirname $0)/common.sh"
+
+rack_root=`relation-get rack_root`
+rack_port=`relation-get rack_port`
+site_name=`echo $JUJU_REMOTE_UNIT | sed 's/\//_/g'`
+
+exit_if_blank "$rack_root" "Rack root"
+exit_if_blank "$rack_port" "Rack port"
+
+if disabled $site_name ; then
+  enable_site "$site_name" "$rack_root" "$rack_port"
+else
+  juju-log 'Restart Phusion Passenger'
+  touch $rack_root/tmp/restart.txt
+fi
+
+open-port $rack_port

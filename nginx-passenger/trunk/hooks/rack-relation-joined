@@ -1,0 +1,6 @@
+#!/bin/bash
+
+set -eu
+source "$(dirname $0)/common.sh"
+
+ensure_disabled 'default'

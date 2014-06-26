@@ -1,0 +1,23 @@
+name: solr
+summary: Enterprise search server based on Lucene
+maintainer: Robert Ayres <robert.ayres@ubuntu.com>
+description: |
+  Enterprise search server based on Lucene
+  .
+  Solr is an open source enterprise search server based on the Lucene
+  Java search library, with XML/HTTP and JSON APIs, hit highlighting,
+  faceted search, caching, replication, and a web administration interface.
+provides:
+  master:
+    interface: solr
+    optional: true
+requires:
+  db-mysql:
+    interface: mysql-shared
+    optional: true
+  db-pgsql:
+    interface: pgsql
+    optional: true
+  slave:
+    interface: solr
+    optional: true

@@ -1,0 +1,14 @@
+options:
+  title:
+    default: Untitled
+    type: string
+    description: The name of the site
+  nickname:
+    type: string
+    description: The nickname for the administrator (cannot be changed)
+  password:
+    type: string
+    description: The password for the administrator
+  email:
+    type: string
+    description: The email address of the administrator (cannot be changed)

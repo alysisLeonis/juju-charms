@@ -1,0 +1,30 @@
+#!/bin/bash
+# This must be renamed to the name of the relation. The goal here is to
+# affect any change needed by relationships being formed, modified, or broken
+# This script should be idempotent.
+
+set -ux
+
+INSTALL_DIR='/opt/cloudfoundry-server/vcap'
+PATH=$PATH:/var/lib/gems/1.9.1/bin
+
+CF_SERVER_IP=`relation-get cf-server-ip`
+CF_SERVER_HOST=`relation-get cf-server-host`
+CF_NATS_USERNAME=`relation-get cf-nats-username`
+CF_NATS_PASSWORD=`relation-get cf-nats-password`
+CF_NATS_DEFAULT_PORT=`relation-get cf-nats-default-port`
+
+[ -z ${CF_SERVER_IP} ] && exit 0
+[ -z ${CF_SERVER_HOST} ] && exit 0
+[ -z ${CF_NATS_USERNAME} ] && exit 0
+[ -z ${CF_NATS_PASSWORD} ] && exit 0
+[ -z ${CF_NATS_DEFAULT_PORT} ] && exit 0
+
+INSTALL_TIME=`facter install-time`
+
+sed -i -e "s/^mbus:.*/mbus: nats:\/\/${CF_SERVER_IP}:${CF_NATS_DEFAULT_PORT}/" \
+       -e "s/^ip_route:.*/ip_route: ${CF_SERVER_IP}/" \
+       /opt/cloudfoundry-server/vcap/services/redis/config/redis_node.yml
+
+service cloudfoundry-server stop
+cd $INSTALL_DIR && bin/vcap start redis

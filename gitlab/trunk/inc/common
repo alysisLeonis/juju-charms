@@ -1,0 +1,4 @@
+#!/bin/bash
+
+hostname=`unit-get public-address`
+private_name=`unit-get private-address`

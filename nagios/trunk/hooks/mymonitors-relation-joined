@@ -1,0 +1,17 @@
+#!/bin/bash
+if [ -n "$JUJU_RELATION_ID" ] ; then
+    # single relation joined
+    rels=$JUJU_RELATION_ID
+else
+    # Refresh from upgrade or some other place
+    rels=`relation-ids mymonitors`
+fi
+
+target_id=${JUJU_UNIT_NAME//\//-}
+
+for rel in $rels ; do
+    relation-set -r $rel \
+        monitors="`cat monitors.yaml`" \
+        target-address=`unit-get private-address` \
+        target-id=$target_id
+done

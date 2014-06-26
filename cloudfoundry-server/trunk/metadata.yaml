@@ -1,0 +1,10 @@
+name: cloudfoundry-server
+maintainer: Juan Negron <juan.negron@canonical.com>
+summary: "Cloud Foundry Server"
+description: |
+   Installs Cloud Foundry Server from VMWare providing the required database,
+   and the relation settings necessary to access it, and completes the
+   configuration of optional services and makes it available.
+provides:
+  cf-server:
+    interface: cf-server

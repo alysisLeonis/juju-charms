@@ -1,0 +1,39 @@
+#!/bin/bash
+
+set -e
+
+# Retrieve the settings from the database
+juju-log "Retrieving database relationship"
+DB_NAME=`relation-get database`
+DB_USER=`relation-get user`
+DB_PASS=`relation-get password`
+DB_HOST=`relation-get private-address`
+
+# Make sure the database info is available before we proceed
+if [[ -z $DB_NAME || -z $DB_USER || -z $DB_PASS || -z $DB_HOST ]] ; then
+
+    juju-log "No database relationship set yet"
+    exit 0
+    
+fi
+
+# Check to see if the installation has taken place
+if [ -f /opt/statusnet_installed ] ; then
+
+    juju-log "Installation already complete"
+    # TODO: update MySQL information in the config file
+    # StatusNet does not provide a script for this
+    exit 0
+
+fi
+
+# Stick the database parameters in a file
+juju-log "Storing database connection parameters"
+cat > /opt/statusnet_db_config <<EOD
+$DB_HOST
+$DB_NAME
+$DB_USER
+$DB_PASS
+EOD
+
+hooks/config-changed

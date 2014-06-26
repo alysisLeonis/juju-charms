@@ -1,0 +1,6 @@
+#!/bin/bash
+
+set -e
+
+juju-log "Setting relation values"
+relation-set hostname=`unit-get private-address` port=80

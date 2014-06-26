@@ -1,0 +1,44 @@
+#!/bin/bash
+
+set -eux
+
+# Config options
+if [ `uname -m` == x86_64 ]; then
+SEAFILE_SERVER_URL="https://bitbucket.org/haiwen/seafile/downloads/seafile-server_2.1.5_x86-64.tar.gz"
+SEAFILE_SERVER_MD5="c07d7dd36f32053d3573b81f6e19243a"
+else
+SEAFILE_SERVER_URL="https://bitbucket.org/haiwen/seafile/downloads/seafile-server_2.1.5_i386.tar.gz"
+SEAFILE_SERVER_MD5="fa0e16ee2d064895d43f1bd5be1bbc91"
+fi
+
+
+INSTALL_PATH="/opt/seafile"
+
+
+# Install pre-requisite packages
+apt-get install -y python-software-properties python2.7 python-setuptools python-simplejson python-imaging sqlite3 dnsutils pwgen
+
+# Install charm-helpers-sh
+apt-add-repository -y ppa:charmers/charm-helpers
+apt-get update
+apt-get install charm-helper-sh
+
+# Include charm-helper-sh
+. /usr/share/charm-helper/sh/net.sh
+
+# Download the seafile server
+SEAFILE_SERVER_PACKAGE=`ch_get_file ${SEAFILE_SERVER_URL} ${SEAFILE_SERVER_MD5}`
+
+# Create the install directory structure
+mkdir -p ${INSTALL_PATH}
+
+# Unpack seafile in install directory
+tar zxfv ${SEAFILE_SERVER_PACKAGE} -C ${INSTALL_PATH}
+
+# Rename the package directory
+mv ${INSTALL_PATH}/seafile-server-* ${INSTALL_PATH}/seafile-server-latest
+touch .seahubport
+touch .newinstall
+touch .serverport
+touch .seafileserverport
+touch .httpserverport

@@ -1,0 +1,46 @@
+#!/usr/bin/python
+# machines:
+#   0: {dns-name: ec2-50-17-84-127.compute-1.amazonaws.com, instance-id: i-8c5c3fec}
+#   1: {dns-name: ec2-184-73-102-113.compute-1.amazonaws.com, instance-id: i-14a2c174}
+#   2: {dns-name: ec2-75-101-184-93.compute-1.amazonaws.com, instance-id: i-e0a2c180}
+# services:
+#   mysql:
+#     charm: local:mysql-11
+#     relations: {db: wordpress}
+#     units:
+#       mysql/0:
+#         machine: 2
+#         relations:
+#           db: {state: up}
+#         state: started
+#   wordpress:
+#     charm: local:wordpress-31
+#     exposed: true
+#     relations: {db: mysql}
+#     units:
+#       wordpress/0:
+#         machine: 1
+#         open-ports: []
+#         relations: {}
+#         state: null
+
+import yaml
+import sys
+from subprocess import Popen, PIPE
+
+
+def main():
+    d = yaml.safe_load(Popen(['juju','status'],stdout=PIPE).stdout)
+    srv = d.get("services", {}).get(sys.argv[1])
+    if srv is None:
+        return
+    units = srv.get("units", {})
+    if units is None:
+        return
+    item = units.items()[0][1].get(sys.argv[2])
+    if item is None:
+        return
+    print item
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,6 @@
+destination: hooks/charmhelpers
+branch: lp:~openstack-charmers/charm-helpers/ssl-everywhere
+include:
+    - core
+    - fetch
+    - contrib.ssl

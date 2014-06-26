@@ -1,0 +1,1 @@
+        <Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs" prefix="localhost_access_log." suffix=".txt" pattern="common" resolveHosts="false"/>

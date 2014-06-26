@@ -1,0 +1,5 @@
+#!/bin/bash
+set -ex
+
+# Fallback to voip relation when declaring mismatched interface relationship.
+exec hooks/voip-relation-joined "$@"

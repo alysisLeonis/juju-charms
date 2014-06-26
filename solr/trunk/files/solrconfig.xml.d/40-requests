@@ -1,0 +1,112 @@
+  <requestDispatcher>
+    <requestParsers multipartUploadLimitInKB="2048000"/>
+    <httpCaching never304="true"/>
+  </requestDispatcher>
+  <requestHandler name="/select" class="solr.SearchHandler" default="true">
+    <lst name="defaults">
+      <str name="echoParams">explicit</str>
+      <int name="rows">10</int>
+      <str name="df">text</str>
+    </lst>
+  </requestHandler>
+  <requestHandler name="/update" class="solr.XmlUpdateRequestHandler"/>
+  <requestHandler name="/update/javabin" class="solr.BinaryUpdateRequestHandler"/>
+  <requestHandler name="/update/csv" class="solr.CSVRequestHandler" startup="lazy"/>
+  <requestHandler name="/update/json" class="solr.JsonUpdateRequestHandler" startup="lazy"/>
+  <requestHandler name="/update/extract" class="solr.extraction.ExtractingRequestHandler" startup="lazy">
+    <lst name="defaults">
+      <str name="fmap.content">text</str>
+      <str name="lowernames">true</str>
+      <str name="uprefix">ignored_</str>
+      <str name="captureAttr">true</str>
+      <str name="fmap.a">links</str>
+      <str name="fmap.div">ignored_</str>
+    </lst>
+  </requestHandler>
+  <requestHandler name="/update/xslt" class="solr.XsltUpdateRequestHandler" startup="lazy"/>
+  <requestHandler name="/analysis/field" class="solr.FieldAnalysisRequestHandler" startup="lazy"/>
+  <requestHandler name="/analysis/document" class="solr.DocumentAnalysisRequestHandler" startup="lazy"/>
+  <requestHandler name="/admin/" class="solr.admin.AdminHandlers"/>
+  <requestHandler name="/admin/ping" class="solr.PingRequestHandler">
+    <lst name="invariants">
+      <str name="q">solrpingquery</str>
+    </lst>
+    <lst name="defaults">
+      <str name="echoParams">all</str>
+    </lst>
+  </requestHandler>
+  <requestHandler name="/debug/dump" class="solr.DumpRequestHandler">
+    <lst name="defaults">
+      <str name="echoParams">explicit</str>
+      <str name="echoHandler">true</str>
+    </lst>
+  </requestHandler>
+  <searchComponent name="tvComponent" class="solr.TermVectorComponent"/>
+  <requestHandler name="/tvrh" class="solr.SearchHandler" startup="lazy">
+    <lst name="defaults">
+      <str name="df">text</str>
+      <bool name="tv">true</bool>
+    </lst>
+    <arr name="last-components">
+      <str>tvComponent</str>
+    </arr>
+  </requestHandler>
+  <searchComponent name="terms" class="solr.TermsComponent"/>
+  <requestHandler name="/terms" class="solr.SearchHandler" startup="lazy">
+    <lst name="defaults">
+      <bool name="terms">true</bool>
+    </lst>
+    <arr name="components">
+      <str>terms</str>
+    </arr>
+  </requestHandler>
+  <searchComponent name="highlight" class="solr.HighlightComponent">
+    <highlighting>
+      <fragmenter name="gap" class="solr.highlight.GapFragmenter" default="true">
+        <lst name="defaults">
+          <int name="hl.fragsize">100</int>
+        </lst>
+      </fragmenter>
+      <fragmenter name="regex" class="solr.highlight.RegexFragmenter">
+        <lst name="defaults">
+          <int name="hl.fragsize">70</int>
+          <float name="hl.regex.slop">0.5</float>
+          <str name="hl.regex.pattern">[-\w ,/\n\&quot;&apos;]{20,200}</str>
+        </lst>
+      </fragmenter>
+      <formatter name="html" class="solr.highlight.HtmlFormatter" default="true">
+        <lst name="defaults">
+          <str name="hl.simple.pre"><![CDATA[<em>]]></str>
+          <str name="hl.simple.post"><![CDATA[</em>]]></str>
+        </lst>
+      </formatter>
+      <encoder name="html" class="solr.highlight.HtmlEncoder"/>
+      <fragListBuilder name="simple" class="solr.highlight.SimpleFragListBuilder" default="true"/>
+      <fragListBuilder name="single" class="solr.highlight.SingleFragListBuilder"/>
+      <fragmentsBuilder name="default" class="solr.highlight.ScoreOrderFragmentsBuilder" default="true"/>
+      <fragmentsBuilder name="colored" class="solr.highlight.ScoreOrderFragmentsBuilder">
+        <lst name="defaults">
+          <str name="hl.tag.pre"><![CDATA[
+               <b style="background:yellow">,<b style="background:lawgreen">,
+               <b style="background:aquamarine">,<b style="background:magenta">,
+               <b style="background:palegreen">,<b style="background:coral">,
+               <b style="background:wheat">,<b style="background:khaki">,
+               <b style="background:lime">,<b style="background:deepskyblue">]]></str>
+          <str name="hl.tag.post"><![CDATA[</b>]]></str>
+        </lst>
+      </fragmentsBuilder>
+      <boundaryScanner name="default" class="solr.highlight.SimpleBoundaryScanner" default="true">
+        <lst name="defaults">
+          <str name="hl.bs.maxScan">10</str>
+          <str name="hl.bs.chars">.,!? &#9;&#10;&#13;</str>
+        </lst>
+      </boundaryScanner>
+      <boundaryScanner name="breakIterator" class="solr.highlight.BreakIteratorBoundaryScanner">
+        <lst name="defaults">
+          <str name="hl.bs.type">WORD</str>
+          <str name="hl.bs.language">en</str>
+          <str name="hl.bs.country">US</str>
+        </lst>
+      </boundaryScanner>
+    </highlighting>
+  </searchComponent>

@@ -1,0 +1,150 @@
+#!/usr/bin/env python
+
+# Rewritten from bash to python 3/2/2014 for charm helper inclusion
+# of SSL-Everywhere!
+import base64
+from jinja2 import Template
+import os
+import shutil
+import subprocess
+from charmhelpers.contrib import ssl
+from charmhelpers.core import hookenv, host
+
+
+# Gather facts
+legacy_relations = hookenv.config('legacy')
+extra_config = hookenv.config('extraconfig')
+ssl_config = hookenv.config('ssl')
+charm_dir = os.environ['CHARM_DIR']
+cert_domain = hookenv.unit_get('public-address')
+
+
+# Checks the charm relations for legacy relations
+# Inserts warnings into the log about legacy relations, as they will be removed
+# in the future
+def warn_legacy_relations():
+    if legacy_relations is not None:
+        hookenv.log("Relations have been radically changed."
+                    " The monitoring interface is not supported anymore.",
+                    "WARNING")
+    hookenv.log("Please use the generic juju-info or the monitors interface",
+                "WARNING")
+
+
+# If the charm has extra configuration provided, write that to the
+# proper nagios3 configuration file, otherwise remove the config
+def write_extra_config():
+    # Be predjudice about this - remove the file always.
+    if host.file_hash('/etc/nagios3/conf.d/extra.cfg') is not None:
+        os.remove('/etc/nagios3/conf.d/extra.cfg')
+    # If we have a config, then write it. the hook reconfiguration will
+    # handle the details
+    if extra_config is not None:
+        host.write_file('/etc/nagios3/conf.d/extra.cfg', extra_config)
+
+
+def ssl_configured():
+    allowed_options = ["on", "only"]
+    if str(ssl_config).lower() in allowed_options:
+        return True
+    return False
+
+
+# Gather local facts for SSL deployment
+deploy_key_path = os.path.join(charm_dir, 'data', '%s.key' % (cert_domain))
+deploy_cert_path = os.path.join(charm_dir, 'data', '%s.crt' % (cert_domain))
+deploy_csr_path = os.path.join(charm_dir, 'data', '%s.csr' % (cert_domain))
+# set basename for SSL key locations
+cert_file = '/etc/ssl/certs/%s.pem' % (cert_domain)
+key_file = '/etc/ssl/private/%s.key' % (cert_domain)
+chain_file = '/etc/ssl/certs/%s.csr' % (cert_domain)
+
+
+# Check for key and certificate, since the CSR is optional
+# leave it out of the dir file check and let the config manager
+# worry about it
+def check_ssl_files():
+    key = os.path.exists(deploy_key_path)
+    cert = os.path.exists(deploy_cert_path)
+    if key is False or cert is False:
+        return False
+    return True
+
+
+# Decode the SSL keys from their base64 encoded values in the configuration
+def decode_ssl_keys():
+    if hookenv.config('ssl_key'):
+        hookenv.log("Writing key from config ssl_key: %s" % key_file)
+        with open(key_file, 'w') as f:
+            f.write(str(base64.b64decode(hookenv.config('ssl_key'))))
+    if hookenv.config('ssl_cert'):
+        with open(cert_file, 'w') as f:
+            f.write(str(base64.b64decode(hookenv.config('ssl_cert'))))
+    if hookenv.config('ssl_chain'):
+        with open(chain_file, 'w') as f:
+            f.write(str(base64.b64decode(hookenv.config('ssl_cert'))))
+
+
+def enable_ssl():
+    # Set the basename of all ssl files
+
+    #Validate that we have configs, and generate a self signed certificate.
+    if not hookenv.config('ssl_cert'):
+        # bail if keys already exist
+        if os.path.exists(cert_file):
+            hookenv.log("Keys exist, not creating keys!", "WARNING")
+            return
+        # Generate a self signed key using CharmHelpers
+        hookenv.log("Generating Self Signed Certificate", "INFO")
+        ssl.generate_selfsigned(key_file, cert_file, cn=cert_domain)
+    else:
+        decode_ssl_keys()
+        hookenv.log("Decoded SSL files", "INFO")
+
+
+# Nagios3 is deployed as a global apache application from the archive.
+# We'll get a little funky and add the SSL keys to the default-ssl config
+# which sets our keys, including the self-signed ones, as the host keyfiles.
+# note: i tried to use cheetah, and it barfed, several times. It can go play
+# in a fire. I'm jusing jinja2.
+def update_apache():
+    if os.path.exists(chain_file) and os.path.getsize(chain_file) > 0:
+        ssl_chain = chain_file
+    else:
+        ssl_chain = None
+    template_values = {'ssl_key': key_file,
+                       'ssl_cert': cert_file,
+                       'ssl_chain': ssl_chain}
+    with open('hooks/templates/default-ssl.tmpl', 'r') as f:
+        templateDef = f.read()
+
+    t = Template(templateDef)
+    with open('/etc/apache2/sites-available/default-ssl', 'w') as f:
+        f.write(t.render(template_values))
+    print("Value of ssl is %s" % ssl)
+    if ssl_config == "only":
+        subprocess.call(['a2dissite', 'default'])
+        hookenv.close_port(80)
+        subprocess.call(['a2ensite', 'default-ssl'])
+        subprocess.call(['a2enmod', 'ssl'])
+    elif ssl_config == "on":
+        subprocess.call(['a2ensite', 'default-ssl'])
+        subprocess.call(['a2enmod', 'ssl'])
+        hookenv.open_port(443)
+    else:
+        subprocess.call(['a2dissite', 'default-ssl'])
+        hookenv.close_port(443)
+        subprocess.call(['a2ensite', 'default'])
+        hookenv.open_port(80)
+
+    host.service_reload('apache2')
+
+
+warn_legacy_relations()
+write_extra_config()
+if ssl_configured():
+    enable_ssl()
+update_apache()
+
+subprocess.call(['hooks/mymonitors-relation-joined'])
+subprocess.call(['hooks/monitors-relation-changed'])

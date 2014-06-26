@@ -1,0 +1,8 @@
+#!/bin/bash
+set -ex
+
+service=$(echo "$JUJU_REMOTE_UNIT" | cut -d/ -f1)
+hostname=$(relation-get private-address)
+
+juju-log "Removing channel for $service/$hostname"
+libs/rm-channel "$service/$hostname"

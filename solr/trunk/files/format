@@ -1,0 +1,3 @@
+#!/bin/bash
+xmlstarlet fo -o
+exit 0

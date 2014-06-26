@@ -1,0 +1,7 @@
+#!/bin/bash
+set -ex
+
+hooks/stop
+hooks/install
+hooks/config-changed
+hooks/start

@@ -1,0 +1,8 @@
+  <directoryFactory name="DirectoryFactory" class="solr.StandardDirectoryFactory"/>
+  <indexConfig>
+    <useCompoundFile>true</useCompoundFile>
+    <deletionPolicy class="solr.SolrDeletionPolicy">
+      <str name="maxCommitsToKeep">1</str>
+      <str name="maxOptimizedCommitsToKeep">0</str>
+    </deletionPolicy>
+  </indexConfig>

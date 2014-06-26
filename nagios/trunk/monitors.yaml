@@ -1,0 +1,11 @@
+version: '0.3'
+monitors:
+    local:
+        procrunning:
+            min: 1
+            name: '/usr/sbin/nagios3'
+    remote:
+        http:
+            nagios:
+                path: /nagios3/
+                status: 'HTTP/1.1 401'

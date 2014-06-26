@@ -1,0 +1,107 @@
+#!/bin/bash
+# Sets more verbose output to help debugging
+set -eux
+
+# Boiler plate code to print context of this script
+juju-log $JUJU_REMOTE_UNIT modified its settings
+juju-log Relation settings:
+relation-get
+juju-log Relation members:
+relation-list
+
+# inc/common has some common variables used through the rest of the script
+source inc/common
+
+# If there is a config file already, Joomla is already installed & config'ed
+if [ -f ~gitlab/gitlab/config/database.yml ]; then
+	juju-log "Database relation is already setup. Nothing to be done"
+	# TODO: Update the config file with new DB values even 
+	exit 0
+fi
+
+# Relation properties
+database=`relation-get database`
+user=`relation-get user`
+password=`relation-get password`
+host=`relation-get private-address`
+
+# Admin password from config.yaml
+admin_password=`config-get admin_password`
+
+# Secret key 
+secret_key=`pwgen 32 1`
+
+# Sanity checks
+## If there is no database name defined, die
+if [ -z "$database" ] ; then
+    juju-log "Not a valid database"
+    exit 1
+fi
+
+## If the user has given no password to the admin user exit with an error
+if [ -z "$admin_password" ] ; then
+	juju-log "No admin password given. Refusing to create an insecure site"
+	juju-log "Please, use config.yaml to provide a proper admin password"
+	exit 1
+fi
+
+function configure_mysql_database() {
+	# Generates the proper database config
+	juju-log Configuring MySQL GitLab database
+	cd ~gitlab/gitlab
+	sudo -u gitlab -H sh -c "sed -e 's/^  database: gitlabhq_production/  database: $database/g' < config/database.yml.mysql > config/database.yml"
+	sudo -u gitlab -H sh -c "sed -i -e 's/^  username: root/  username: $user/g' config/database.yml"
+	sudo -u gitlab -H sh -c "sed -i -e 's/^  password: \"secure password\"/  password: \"$password\"/g' config/database.yml"
+	sudo -u gitlab -H sh -c "sed -i -e 's/^  # host: localhost/  host: $host/g' config/database.yml"
+	cd -
+}
+
+function install_mysql_gems() {
+	cd ~gitlab/gitlab
+
+	# TODO: this gem install is probably better off in the install hook
+	sudo gem install charlock_holmes --version '0.6.9'
+
+	# For MySQL (note, the option says "without")
+	sudo -u gitlab -H bundle install --deployment --without development test postgres
+	cd -
+}
+
+function init_database() {
+	cd ~gitlab/gitlab
+	juju-log "Seting up GitLab and initializing database"
+	sudo -u gitlab -H sh -c "yes yes | bundle exec rake gitlab:setup RAILS_ENV=production"
+	cd -
+}
+
+function precompile() {
+	# TODO: maybe this can be done during install, but I am not sure if it needs the db connection to
+	# be established already.
+	cd ~gitlab/gitlab
+	juju-log "Precompiling GitLab. This may take a while (15 minutes on ec2 t1.micro)..."
+	juju-log "Please, be patient"
+	sudo -u gitlab -H bundle exec rake assets:precompile RAILS_ENV=production
+	juju-log "Precompile finished. Thanks for your patience"
+	cd -
+}
+
+function set_admin_password() {
+	encrypted_password=`ruby -e 'require "bcrypt"; puts BCrypt::Password.create(ARGV[0], :cost => 10)' $admin_password`
+	# TODO: allow for email to be config'ed too
+	echo UPDATE users set encrypted_password=\"$encrypted_password\" WHERE email=\"admin@local.host\" | \
+	mysql -h $host -u $user --password=$password $database
+}
+
+
+juju-log "Adding database relation"
+configure_mysql_database
+install_mysql_gems
+init_database
+set_admin_password
+precompile
+
+juju-log "Opening port 80"
+open-port 80/tcp
+
+juju-log "Starting Nginx and GitLab"
+hooks/start

@@ -1,0 +1,2 @@
+#!/bin/bash
+sudo -u gitlab -H rm -f ~gitlab/gitlab/config/database.yml

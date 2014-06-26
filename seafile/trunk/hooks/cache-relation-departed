@@ -1,0 +1,21 @@
+#!/bin/bash
+
+set -eux
+
+if [ -f .cachehost ]; then
+    juju-log "Removing configuration"
+    sed -i "/CACHES/d" /opt/seafile/seahub_settings.py
+    sed -i "/default/d" /opt/seafile/seahub_settings.py
+    sed -i "/BACKEND/d" /opt/seafile/seahub_settings.py
+    sed -i "/LOCATION/d" /opt/seafile/seahub_settings.py
+    sed -i "/\}/d" /opt/seafile/seahub_settings.py
+    juju-log "Uninstalling dependency"
+    apt-get remove python-memcache -y
+fi
+
+if [ -f .started ]; then
+    juju-log "Restarting service"
+    hooks/stop
+    hooks/start
+fi
+

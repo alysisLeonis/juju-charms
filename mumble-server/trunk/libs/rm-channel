@@ -1,0 +1,26 @@
+#!/usr/bin/python
+# Copyright 2012, Kees Cook <kees@ubuntu.com>
+# License: GPLv3
+import sys
+import mice
+import micejuju
+
+name = sys.argv[1]
+
+# Short-circuit: does this channel already exist?
+index = micejuju.getChanIndexByName(mice.s, name)
+if index == None:
+    print "Already removed"
+    sys.exit(0)
+
+# Find parent, remove channel.
+chans = mice.s.getChannels()
+parent = chans[index].parent
+mice.s.removeChannel(index)
+
+# Remove parent if all siblings are gone too.
+if '/' in name:
+    siblings = micejuju.getChansByParent(mice.s, parent)
+    if len(siblings) == 0:
+        print "no siblings, removing parent"
+        mice.s.removeChannel(parent)

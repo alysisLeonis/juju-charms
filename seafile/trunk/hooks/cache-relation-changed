@@ -1,0 +1,42 @@
+#!/bin/bash
+
+set -eux
+
+HOST=`relation-get private-address`
+PORT=`relation-get port`
+
+if [ -z "$PORT" ]; then
+    juju-log "Details haven't been set yet, exiting silently"
+    exit 0
+fi
+
+if [ ! -f .cachehost ]; then
+    juju-log "Installing dependency"
+    apt-get install -y python-memcache
+    juju-log "Setting up cache"
+    cat >> /opt/seafile/seahub_settings.py << EOF
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.memcached.MemcachedCache',
+	'LOCATION': '$HOST:$PORT',
+    }
+}
+EOF
+    echo "$HOST" > .cachehost
+    echo "$PORT" > .cacheport
+    juju-log "Cache set up!"
+elif [ -f .cachehost ]; then
+    if [ `cat .cachehost` != "$HOST" ] || [ `cat .cacheport` != "$PORT" ]; then
+        juju-log "Changing cache server details"
+        OLDPORT=`cat .cacheport`
+        OLDHOST=`cat .cachehost`
+        sed -i "s/$OLDHOST\:$PORT/$HOST\:$PORT/" /opt/seafile/seahub_settings.py
+        juju-log "Details changed successfully"
+    fi
+fi
+
+if [ -f .started ]; then
+    juju-log "Restarting service"
+    hooks/stop
+    hooks/start
+fi
